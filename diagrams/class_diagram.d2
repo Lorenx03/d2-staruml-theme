@@ -1,0 +1,66 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+direction: right
+
+# <<entity>>
+Person: {
+  shape: class
+  -id: int
+  -name: string
+  +getName(): string
+}
+
+# <<entity>>
+Student: {
+  shape: class
+  -studentId: int
+  +enroll(): void
+}
+
+# <<entity>>
+Course: {
+  shape: class
+  -courseId: int
+  -title: string
+  +addStudent(): void
+}
+
+# <<entity>>
+Department: {
+  shape: class
+  -name: string
+  +addCourse(): void
+}
+
+# <<entity>>
+Lesson: {
+  shape: class
+  -title: string
+  -duration: int
+  +start(): void
+}
+
+# <<control>>
+EnrollmentService: {
+  shape: class
+  +register(): bool
+}
+
+# Association (not navigable either way)
+Student -- Course: enrolls in
+
+# Generalization: hollow triangle at Person
+Student -> Person  # <<gen>>
+
+# Aggregation: hollow diamond at Department (the whole); write part -> whole
+Course -> Department  # <<aggr>>
+
+# Composition: filled diamond at Course (the whole); write part -> whole
+Lesson -> Course  # <<comp>>
+
+# Dependency: dashed arrow
+EnrollmentService -> Course  # <<dep>>

@@ -1,0 +1,254 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+direction: down
+
+# ===================== boundaries =====================
+# <<boundary>>
+PairingTokenPresentationBoundary: {
+  shape: class
+  +showPairingToken(pToken\: String)
+}
+
+# <<boundary>>
+AdvertisingBoundary: {
+  shape: class
+  +startAdvertising(plate\: PlateBean)
+  +stopAdvertising()
+}
+
+# <<boundary>>
+DriverRetrievalBoundary: {
+  shape: class
+  +getDriver(token\: String): DriverBean
+}
+
+# <<boundary>>
+RemoteConnectionBoundary: {
+  shape: class
+  +requestPairing(): PairingChallengeBean
+  +submitPairingToken(challengeId\: String, pt\: String, type\: ClientType): PairingResponseBean
+  +confirmSession(token\: String): ConfirmationOutcome
+  +endSession(token\: String)
+}
+
+# ===================== controls =====================
+# <<control>>
+PairingControl: {
+  shape: class
+  +advertPresence()
+  +isPairingInProgress(): Boolean
+  +isInCooldown(now\: DateTime): Boolean
+  +startPairingRoutine(): String
+  +getChallengeExpiry(): DateTime
+  +stopPairingRoutine()
+  +expireChallenge(now\: DateTime)
+  +validatePairingToken(challengeId\: String, pt\: String): PairingOutcome
+}
+
+# <<control>>
+RemoteConnectionControl: {
+  shape: class
+  +requestPairing(): PairingChallengeBean
+  +submitPairingToken(challengeId\: String, pt\: String, type\: ClientType): PairingResponseBean
+  +confirmSession(token\: String): ConfirmationOutcome
+  +provideDriver(token\: String): DriverBean
+  +releaseSession(token\: String)
+}
+
+# ===================== entities =====================
+# <<entity>>
+RobotEntity: {
+  shape: class
+  -robotId: String
+  -endpoint: String
+  +getRobotId(): String
+  +getDriver(): DriverEntity
+  +getEndpoint(): String
+}
+
+# <<entity>>
+DriverEntity: {
+  shape: class
+  -version: String
+  -location: String
+  +getHash(): String
+  +getLocation(): String
+  +getVersion(): String
+}
+
+# <<entity>>
+SeatsEntity: {
+  shape: class
+  +addSession(type\: ClientType): SessionEntity
+  +activateSession(token\: String)
+  +hasFreeSeat(type\: ClientType): Boolean
+  +findSession(token\: String): SessionEntity
+  +removeSession(token\: String)
+  +purgeExpired(now\: DateTime)
+}
+
+# <<entity>>
+SessionEntity: {
+  shape: class
+  -sessionToken: String
+  -expiresAt: DateTime
+  -type: ClientType
+  -confirmBy: DateTime
+  -state: SessionState
+  +generateSessionToken(): String
+  +getSessionToken(): String
+  +getExpiresAt(): DateTime
+  +validateToken(clientSessionToken\: String): Boolean
+  +isExpired(now\: DateTime): Boolean
+  +activate()
+}
+
+# <<entity>>
+PairingStateEntity: {
+  shape: class
+  -challengeId: String
+  -currentToken: String
+  -expiresAt: DateTime
+  -cooldownUntil: DateTime
+  +newChallenge(): String
+  +validate(challengeId\: String, clientToken\: String): PairingOutcome
+  +getToken(): String
+  +getExpiresAt(): DateTime
+  +isOpen(now\: DateTime): Boolean
+  +startCooldown(now\: DateTime)
+  +isInCooldown(now\: DateTime): Boolean
+}
+
+# ===================== beans =====================
+# <<bean>>
+PlateBean: {
+  shape: class
+  -robotId: String
+  -driverVer: String
+  -driverHash: String
+  -endpoint: String
+}
+
+# <<bean>>
+DriverBean: {
+  shape: class
+  -driverURI: String
+  -version: String
+  -hash: String
+}
+
+# <<bean>>
+SessionBean: {
+  shape: class
+  -sessionToken: String
+  -expiresAt: DateTime
+  -robotId: String
+}
+
+# <<bean>>
+PairingResponseBean: {
+  shape: class
+  -outcome: PairingSubmitOutcome
+  -session: SessionBean
+}
+
+# <<bean>>
+PairingChallengeBean: {
+  shape: class
+  -outcome: PairingRequestOutcome
+  -challengeId: String
+  -expiresAt: DateTime
+}
+
+# ===================== enumerations =====================
+# <<enumeration>>
+PairingOutcome: {
+  shape: class
+  ACCEPTED
+  UNKNOWN_CHALLENGE
+  UNKNOWN_TOKEN
+  EXPIRED
+}
+
+# <<enumeration>>
+ConfirmationOutcome: {
+  shape: class
+  CONFIRMED
+  UNKNOWN_TOKEN
+  EXPIRED
+  ALREADY_CONFIRMED
+}
+
+# <<enumeration>>
+PairingSubmitOutcome: {
+  shape: class
+  ACCEPTED
+  TOKEN_REJECTED
+  CHALLENGE_EXPIRED
+  NO_FREE_SEAT
+}
+
+# <<enumeration>>
+PairingRequestOutcome: {
+  shape: class
+  ACCEPTED
+  PAIRING_IN_PROGRESS
+  COOLDOWN
+}
+
+# <<enumeration>>
+ClientType: {
+  shape: class
+  OPERATOR
+  ANALYST
+}
+
+# <<enumeration>>
+SessionState: {
+  shape: class
+  PENDING
+  ACTIVE
+}
+
+# ===================== associations =====================
+PairingControl -> PairingTokenPresentationBoundary: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+PairingControl -> AdvertisingBoundary: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+DriverRetrievalBoundary -> RemoteConnectionControl: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+RemoteConnectionBoundary -> RemoteConnectionControl: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+RemoteConnectionControl -> PairingControl: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+RemoteConnectionControl -> RobotEntity: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+RemoteConnectionControl -> SeatsEntity: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+PairingControl -> RobotEntity: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+PairingControl -> PairingStateEntity: {source-arrowhead.label: 1; target-arrowhead.label: 1}  # <<assoc>>
+
+# ===================== compositions (part -> whole) =====================
+DriverEntity -> RobotEntity: {source-arrowhead.label: "+driver  1"; target-arrowhead.label: 1}  # <<comp>>
+SessionEntity -> SeatsEntity: {source-arrowhead.label: "+sessions  0..*"; target-arrowhead.label: 1}  # <<comp>>
+
+# ===================== dependencies =====================
+AdvertisingBoundary -> PlateBean  # <<dep>>
+PairingControl -> PlateBean  # <<dep>>
+PairingControl -> PairingOutcome  # <<dep>>
+PairingStateEntity -> PairingOutcome  # <<dep>>
+DriverRetrievalBoundary -> DriverBean  # <<dep>>
+RemoteConnectionControl -> DriverBean  # <<dep>>
+RemoteConnectionBoundary -> SessionBean  # <<dep>>
+RemoteConnectionControl -> SessionBean  # <<dep>>
+RemoteConnectionBoundary -> ConfirmationOutcome  # <<dep>>
+RemoteConnectionControl -> ConfirmationOutcome  # <<dep>>
+RemoteConnectionBoundary -> PairingResponseBean  # <<dep>>
+RemoteConnectionControl -> PairingResponseBean  # <<dep>>
+PairingResponseBean -> SessionBean  # <<dep>>
+PairingResponseBean -> PairingSubmitOutcome  # <<dep>>
+RemoteConnectionBoundary -> PairingChallengeBean  # <<dep>>
+RemoteConnectionControl -> PairingChallengeBean  # <<dep>>
+PairingChallengeBean -> PairingRequestOutcome  # <<dep>>
+RemoteConnectionBoundary -> ClientType  # <<dep>>
+RemoteConnectionControl -> ClientType  # <<dep>>
+SeatsEntity -> ClientType  # <<dep>>
+SessionEntity -> ClientType  # <<dep>>
+SessionEntity -> SessionState  # <<dep>>
