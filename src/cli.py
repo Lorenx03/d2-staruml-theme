@@ -1,12 +1,12 @@
-"""`compile`: render plain d2 class diagrams in StarUML style.
+"""`d2-staruml`: render plain d2 class diagrams in StarUML style.
 
 Diagrams live in diagrams/; renders go to out/ (same sub-folders).
 
-    uv run compile                            # every diagrams/**/*.d2 -> out/**/*.svg
-    uv run compile class_diagram              # just diagrams/class_diagram.d2
-    uv run compile --png                      # PNGs instead (needs rsvg-convert)
-    uv run compile class_diagram -o x.svg     # explicit output path (one diagram)
-    uv run compile class_diagram -w           # live preview in the browser
+    uv run d2-staruml                         # every diagrams/**/*.d2 -> out/**/*.svg
+    uv run d2-staruml class_diagram           # just diagrams/class_diagram.d2
+    uv run d2-staruml --png                   # PNGs instead (needs rsvg-convert)
+    uv run d2-staruml class_diagram -o x.svg  # explicit output path (one diagram)
+    uv run d2-staruml class_diagram -w        # live preview in the browser
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def d2_command(args: argparse.Namespace) -> list[str]:
 
 
 def fail(message: str) -> None:
-    print(f"compile: {message}", file=sys.stderr)
+    print(f"d2-staruml: {message}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -59,7 +59,7 @@ def write_converted(source: Path, target: Path) -> str:
     """Convert `source` into `target`; returns the converted text."""
     text, warnings = convert(source.read_text(encoding="utf-8"))
     for warning in warnings:
-        print(f"compile: warning: {warning}", file=sys.stderr)
+        print(f"d2-staruml: warning: {warning}", file=sys.stderr)
     target.write_text(text, encoding="utf-8")
     return text
 
@@ -145,10 +145,10 @@ def watch(args: argparse.Namespace, source: Path) -> None:
             try:
                 text, warnings = convert(source.read_text(encoding="utf-8"))
             except Exception as exc:  # keep watching while the file is half-edited
-                print(f"compile: could not convert: {exc}", file=sys.stderr)
+                print(f"d2-staruml: could not convert: {exc}", file=sys.stderr)
                 continue
             for warning in warnings:
-                print(f"compile: warning: {warning}", file=sys.stderr)
+                print(f"d2-staruml: warning: {warning}", file=sys.stderr)
             if text != last:
                 styled.write_text(text, encoding="utf-8")
                 last = text
@@ -165,7 +165,7 @@ def watch(args: argparse.Namespace, source: Path) -> None:
 def find_diagrams(diagrams_dir: Path, names: list[str]) -> list[Path]:
     """All diagrams in `diagrams_dir`, or the named ones (name, name.d2 or a path)."""
     if not diagrams_dir.is_dir():
-        fail(f"no {diagrams_dir}/ folder here: run compile from the project folder (or use --diagrams-dir)")
+        fail(f"no {diagrams_dir}/ folder here: pass a folder (d2-staruml path/to/dir) or use --diagrams-dir")
     if not names:
         found = sorted(
             p for p in diagrams_dir.rglob("*.d2")
@@ -190,17 +190,22 @@ def find_diagrams(diagrams_dir: Path, names: list[str]) -> list[Path]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog="compile",
+        prog="d2-staruml",
         description="Render plain d2 class diagrams in StarUML style. "
-        "Without arguments, renders every diagram in diagrams/ to out/.",
+        "Without arguments, renders every diagram in diagrams/ to out/. "
+        "Given a folder (d2-staruml path/to/dir -o svgs/), renders every diagram in it.",
     )
     parser.add_argument(
         "diagrams",
         nargs="*",
         metavar="DIAGRAM",
-        help="diagrams to render: a name (class_diagram), file name or path inside diagrams/ (default: all)",
+        help="diagrams to render: a name (class_diagram), file name or path inside diagrams/ (default: all), "
+        "or a single folder whose diagrams are all rendered",
     )
-    parser.add_argument("-o", "--output", help="output .svg or .png path (one diagram only)")
+    parser.add_argument(
+        "-o", "--output",
+        help="output .svg or .png path (one diagram only); with a folder as input, the output folder",
+    )  # fmt: skip
     parser.add_argument(
         "--diagrams-dir",
         default=os.environ.get("STARUML_DIAGRAMS_DIR", DEFAULT_DIAGRAMS_DIR),
@@ -223,6 +228,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    # `d2-staruml some/dir [-o out_dir]`: render every diagram in that folder.
+    if len(args.diagrams) == 1 and Path(args.diagrams[0]).is_dir():
+        args.diagrams_dir = args.diagrams[0]
+        args.diagrams = []
+        if args.output:
+            args.out_dir, args.output = args.output, None
+
     if not shutil.which("d2"):
         fail("d2 not found (brew install d2)")
     try:
@@ -234,7 +246,7 @@ def main(argv: list[str] | None = None) -> None:
     if len(sources) > 1:
         for option, used in (("-o", args.output), ("--emit-d2", args.emit_d2), ("-w", args.watch)):
             if used:
-                fail(f"{option} works with one diagram; name it, e.g. compile {sources[0].stem} {option}")
+                fail(f"{option} works with one diagram; name it, e.g. d2-staruml {sources[0].stem} {option}")
 
     if args.watch:
         watch(args, sources[0])
@@ -245,7 +257,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             render(args, source)
         except RenderError as exc:
-            print(f"compile: {source}: {exc}", file=sys.stderr)
+            print(f"d2-staruml: {source}: {exc}", file=sys.stderr)
             failed.append(source)
     if failed:
         fail(f"{len(failed)} of {len(sources)} diagram(s) failed")

@@ -10,7 +10,7 @@ and relationship kinds with comments, and get an SVG that looks like StarUML:
 - UML arrowheads: open arrows, hollow triangles, diamonds
 
 ```sh
-uv run compile        # every diagram in diagrams/ -> out/
+uv run d2-staruml                               # every diagram in diagrams/ -> out/
 ```
 
 ## Requirements
@@ -23,6 +23,27 @@ uv run compile        # every diagram in diagrams/ -> out/
 Fonts come with the repo (`fonts/`), so nothing has to be installed and the
 output looks the same on every OS.
 
+## Using it anywhere
+
+Install the command once, from the project folder:
+
+```sh
+uv tool install --editable .   # puts d2-staruml in ~/.local/bin
+```
+
+Then, from any folder:
+
+```sh
+d2-staruml path/to/dir -o path/to/svgs   # every .d2 in dir (and sub-folders) -> svgs/
+d2-staruml path/to/dir                   # ... -> ./out/
+d2-staruml path/to/dir --png             # PNGs instead
+```
+
+The install is editable, so it keeps using this folder's code, fonts and
+icons: changes here apply straight away, and the project folder must stay
+where it is (if you move it, run the install again). `uv tool uninstall
+d2-staruml` removes it.
+
 ## Usage
 
 Diagrams live in `diagrams/` (sub-folders are fine); renders go to `out/`,
@@ -30,21 +51,21 @@ mirroring the same sub-folders. `out/` is gitignored and created when missing.
 Run the commands from the project folder.
 
 ```sh
-uv run compile                               # all of diagrams/**/*.d2 -> out/**/*.svg
-uv run compile --png                         # ... as PNGs (2x)
-uv run compile class_diagram                 # just diagrams/class_diagram.d2
-uv run compile class_diagram pairing_example # several by name
-uv run compile diagrams/sub/foo.d2           # by path (must be inside diagrams/)
-uv run compile --layout elk                  # override the layout engine
-uv run compile --font Outfit                 # another font from fonts/
+uv run d2-staruml                               # all of diagrams/**/*.d2 -> out/**/*.svg
+uv run d2-staruml --png                         # ... as PNGs (2x)
+uv run d2-staruml class_diagram                 # just diagrams/class_diagram.d2
+uv run d2-staruml class_diagram pairing_example # several by name
+uv run d2-staruml diagrams/sub/foo.d2           # by path (must be inside diagrams/)
+uv run d2-staruml --layout elk                  # override the layout engine
+uv run d2-staruml --font Outfit                 # another font from fonts/
 ```
 
 With a single diagram:
 
 ```sh
-uv run compile class_diagram -w              # live preview in the browser
-uv run compile class_diagram -o any/path.svg # explicit output path (.svg or .png)
-uv run compile class_diagram --emit-d2 x.d2  # also save the generated d2
+uv run d2-staruml class_diagram -w              # live preview in the browser
+uv run d2-staruml class_diagram -o any/path.svg # explicit output path (.svg or .png)
+uv run d2-staruml class_diagram --emit-d2 x.d2  # also save the generated d2
 ```
 
 When one diagram fails (with its file and line), the others are still
@@ -195,7 +216,7 @@ In `diagrams/`:
 - `pairing_example.d2`: a full BCE diagram (boundaries, controls, entities,
   beans, enumerations), ELK layout
 
-Render them with `uv run compile` (output goes to `out/`, which is gitignored).
+Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored).
 
 ## Limitations
 
@@ -214,7 +235,7 @@ Render them with `uv run compile` (output goes to `out/`, which is gitignored).
 diagrams/         # your .d2 files
 out/              # renders (gitignored)
 src/
-  cli.py          # the `compile` command: validate -> convert -> d2 -> post-process
+  cli.py          # the `d2-staruml` command: validate -> convert -> d2 -> post-process
   convert.py      # plain d2 -> styled d2
   style.py        # colours, stereotypes, sizes, edge kinds
   postprocess.py  # SVG touch-ups
