@@ -30,12 +30,16 @@ SHADOW_DX, SHADOW_DY = "4", "4"
 ARROW = re.compile(r'<polygon points="0,0 ([\d.]+),([\d.]+) 0,([\d.]+) [\d.]+,\2" fill="([^"]+)"[^>]*/>')
 
 
-# The same head at the start of a line (`A <- B`): "0,H/2 L,0 N,H/2 L,H", tip at 0.
-ARROW_START = re.compile(r'<polygon points="0,([\d.]+) ([\d.]+),0 [\d.]+,\1 \2,([\d.]+)" fill="([^"]+)"[^>]*/>')
+# The same head at the start of a line (`A <- B`): "0,H/2 L,0 N,H/2 L,H", tip at 0,
+# notch N inside the head (N < L). A filled diamond has the same shape of points
+# ("0,H/2 W/2,0 W,H/2 W/2,H") but with its third point beyond L: it must be left alone.
+ARROW_START = re.compile(r'<polygon points="0,([\d.]+) ([\d.]+),0 ([\d.]+),\1 \2,([\d.]+)" fill="([^"]+)"[^>]*/>')
 
 
 def _open_arrow_start(m: re.Match[str]) -> str:
-    mid_y, length, h, color = m.group(1), float(m.group(2)), float(m.group(3)), m.group(4)
+    mid_y, length, notch, h, color = m.group(1), float(m.group(2)), float(m.group(3)), float(m.group(4)), m.group(5)
+    if notch >= length:  # a diamond, not an arrowhead
+        return m.group(0)
     return (
         f'<polyline points="{length - 0.5:g},0.5 0,{mid_y} {length - 0.5:g},{h - 0.5:g}" '
         f'fill="none" stroke="{color}" stroke-width="1" stroke-linejoin="miter" />'
