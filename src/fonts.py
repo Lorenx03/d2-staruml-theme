@@ -13,7 +13,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import struct
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -112,3 +114,57 @@ def fontconfig_env(font: Font, tmp: Path) -> dict[str, str]:
         encoding="utf-8",
     )
     return {**os.environ, "FONTCONFIG_FILE": str(config), "PANGOCAIRO_BACKEND": "fc"}
+
+
+# ---------------------------------------------------------------- measuring text
+# Use case ovals are sized to their name, so the converter needs text widths.
+# Only advance widths are read (cmap + hmtx), no kerning: a hair wide, never narrow.
+
+
+@lru_cache(maxsize=None)
+def _metrics(path: Path) -> tuple[dict[int, int], tuple[int, ...], int]:
+    """(code point -> glyph id, advance width per glyph, units per em) of a .ttf/.otf."""
+    data = path.read_bytes()
+    u16 = lambda at: struct.unpack_from(">H", data, at)[0]  # noqa: E731
+    u32 = lambda at: struct.unpack_from(">I", data, at)[0]  # noqa: E731
+    tables = {data[12 + 16 * i : 16 + 16 * i].decode("latin-1"): u32(20 + 16 * i) for i in range(u16(4))}
+    units_per_em = u16(tables["head"] + 18)
+    n_metrics = u16(tables["hhea"] + 34)
+    advances = tuple(u16(tables["hmtx"] + 4 * i) for i in range(n_metrics))
+
+    cmap, subtables = tables["cmap"], {}
+    for i in range(u16(tables["cmap"] + 2)):
+        record = cmap + 4 + 8 * i
+        subtables[(u16(record), u16(record + 2))] = cmap + u32(record + 4)
+    glyphs: dict[int, int] = {}
+    for key in ((3, 10), (0, 4), (0, 6), (3, 1), (0, 3)):
+        at = subtables.get(key)
+        if at is None:
+            continue
+        if u16(at) == 12:
+            for g in range(u32(at + 12)):
+                start, end, glyph = struct.unpack_from(">III", data, at + 16 + 12 * g)
+                glyphs.update((c, glyph + c - start) for c in range(start, end + 1))
+            break
+        if u16(at) == 4:
+            segs = u16(at + 6) // 2
+            ends, starts = at + 14, at + 16 + 2 * segs
+            deltas, offsets = starts + 2 * segs, starts + 4 * segs
+            for s in range(segs):
+                start, end = u16(starts + 2 * s), u16(ends + 2 * s)
+                delta, offset = u16(deltas + 2 * s), u16(offsets + 2 * s)
+                for c in range(start, min(end, 0xFFFE) + 1):
+                    if offset == 0:
+                        glyphs[c] = (c + delta) & 0xFFFF
+                    else:
+                        g = u16(offsets + 2 * s + offset + 2 * (c - start))
+                        glyphs[c] = (g + delta) & 0xFFFF if g else 0
+            break
+    return glyphs, advances, units_per_em
+
+
+def text_width(path: Path, text: str, size: float) -> float:
+    """Width in px of one line of `text` set in the font file at `path`."""
+    glyphs, advances, units_per_em = _metrics(path)
+    units = sum(advances[min(glyphs.get(ord(c), 0), len(advances) - 1)] for c in text)
+    return units * size / units_per_em

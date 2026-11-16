@@ -1,13 +1,16 @@
-# StarUML-style class diagrams with d2
+# StarUML-style class and use case diagrams with d2
 
-Write UML class diagrams in plain [d2](https://d2lang.com), mark stereotypes
-and relationship kinds with comments, and get an SVG that looks like StarUML:
+Write UML class diagrams and use case diagrams in plain [d2](https://d2lang.com),
+mark stereotypes and relationship kinds with comments, and get an SVG that looks
+like StarUML:
 
 - bundled fonts (Inter by default), left-aligned members, bold class names,
   compartment lines
 - `«stereotype»` lines, with the boundary/control/entity icons and colours
 - thin black borders, a soft grey shadow
 - UML arrowheads: open arrows, hollow triangles, diamonds
+- use case diagrams: stick-figure actors, use case ellipses, a system box,
+  dashed `«include»`/`«extend»` arrows ([below](#use-case-diagrams))
 
 ```sh
 uv run d2-staruml                               # every diagram in diagrams/ -> out/
@@ -208,6 +211,68 @@ many edges attach to it; dagre doesn't.
 Classes and edges inside containers (`pkg: { … }`) are converted too.
 Everything that isn't a class or an edge is passed through unchanged.
 
+## Use case diagrams
+
+Put `# <<usecase diagram>>` anywhere at the top level of the file
+(`use-case diagram`, `use_case diagram` work too). Without it, a file is a
+class diagram.
+
+```d2
+# <<usecase diagram>>
+direction: right
+
+# <<actor>>
+Operator
+
+Jazebo: {
+  drive: Drive robot
+  script: Execute script
+  pair: Pair with robot
+
+  script -> drive  # <<extend>>
+  drive -> pair    # <<include>>
+}
+
+# <<actor>>
+Motion: Motion-control system
+
+Operator -> Jazebo.drive
+Jazebo.drive -> Motion
+```
+
+In a use case diagram:
+
+| You write                                    | Drawn as                              |
+| -------------------------------------------- | ------------------------------------- |
+| `# <<actor>>` above a shape, or `shape: person` | stick figure, bold name below       |
+| a shape with shapes inside (`Sys: { … }`)    | system box, bold name at the top      |
+| any other shape (`drive: Drive robot`)       | use case: ellipse, bold name          |
+| `A -> B`                                     | association: line + open arrow        |
+| `A -- B`                                     | association without arrow             |
+| `A -> B  # <<include>>`                      | dashed + open arrow, labelled «include» |
+| `A -> B  # <<extend>>`                       | dashed + open arrow, labelled «extend»  |
+| `A -> B  # <<gen>>`                          | generalization (hollow triangle)      |
+
+- `# <<usecase>>` and `# <<system>>` (or `<<subject>>`) force the kind,
+  e.g. for an empty system box.
+- **«extend» goes from the extending use case to the base one**
+  (`script -> drive`); «include» from the base one to the included one.
+- A shape used in an edge but never declared (`Operator -> Drive robot`)
+  becomes a use case. Declare actors explicitly.
+- Write a label to replace «include»/«extend»: `a -> b: custom  # <<include>>`.
+- Classes (`shape: class`, or another stereotype such as `<<entity>>`) are
+  still drawn as classes.
+- Each use case oval is fitted to its name, measured with the Bold font
+  (`width`/`height` inside the shape override it).
+- ELK (`--layout elk`) puts primary actors on the left and secondary ones on the
+  right, like the usual StarUML layout. Dagre puts the actors above the system.
+- With ELK, use case diagrams get tighter spacing than d2's defaults, so they
+  are less wide: 40px between columns (instead of 70), 20px between edges and
+  shapes (40) and 30px inside the sides of the system box (50). The box also
+  gets extra room at the top (80 instead of 50), so edges to actors placed high
+  up stay inside it instead of running along its top border. The values are
+  `UC_ELK` in `src/style.py`.
+
 ## Examples
 
 In `diagrams/`:
@@ -215,6 +280,8 @@ In `diagrams/`:
 - `class_diagram.d2`: small diagram, ELK layout
 - `pairing_example.d2`: a full BCE diagram (boundaries, controls, entities,
   beans, enumerations), ELK layout
+- `usecase_example.d2`: a use case diagram (actors, system, «include»,
+  «extend»), ELK layout
 
 Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored).
 
@@ -240,8 +307,8 @@ src/
   style.py        # colours, stereotypes, sizes, edge kinds
   postprocess.py  # SVG touch-ups
   fonts.py        # finds the font files in fonts/
+  icons/          # boundary / control / entity / actor icons
 fonts/            # bundled font families (OFL)
-  icons/          # boundary / control / entity icons
 tests/            # uv run python -m unittest discover -s tests
 ```
 
@@ -252,7 +319,10 @@ tests/            # uv run python -m unittest discover -s tests
    stereotype (with icon), name, separators, members, bottom padding. d2's
    own `shape: class` can't be restyled: it uses a monospace font,
    right-aligns types and has no stereotype line. Edges with a kind comment
-   get their arrowheads and dashes. The result goes to a hidden
+   get their arrowheads and dashes. In a use case diagram, shapes become
+   ovals, `shape: image` actors (`icons/actor.svg`) or a system container
+   instead (ovals are sized from the name's width in the Bold font,
+   read from the font file by `fonts.text_width`). The result goes to a hidden
    `.<name>.staruml.d2` next to your file, so relative imports keep working.
    It is deleted afterwards; `--emit-d2` keeps a copy.
 2. **Render.** `d2` renders that file with the fonts swapped:

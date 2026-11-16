@@ -117,6 +117,66 @@ class EdgeTests(unittest.TestCase):
         self.assertEqual(out.strip(), "(A -> B)[0].style.stroke: red")
 
 
+UC = "# <<usecase diagram>>\n"
+
+
+def block(d2: str, key: str) -> str:
+    """The converted `key: … { … }` block (top level or nested), as text."""
+    return re.search(rf"(?ms)^(\s*){re.escape(key)}:.*?\{{\n.*?^\1\}}", d2).group(0)
+
+
+class UseCaseTests(unittest.TestCase):
+    def test_class_diagram_is_the_default(self):
+        out, _ = convert("A\nA -> B\n")
+        self.assertNotIn("oval", out)
+
+    def test_actor_use_case_and_system(self):
+        out, _ = convert(UC + "# <<actor>>\nOperator\nSys: {\n  drive: Drive robot\n}\nOperator -> Sys.drive\n")
+        self.assertIn("actor.svg", block(out, "Operator"))
+        system = block(out, "Sys")
+        self.assertIn("label.near: top-center", system)
+        self.assertIn("drive: Drive robot {", system)
+        self.assertIn("shape: oval", block(out, "  drive"))
+        self.assertIn("Operator -> Sys.drive: {", out)
+        self.assertIn("target-arrowhead.shape: arrow", out)
+
+    def test_diagram_annotation_is_not_a_stereotype(self):
+        out, _ = convert("# <<use-case diagram>>\nOperator: {shape: person}\n")
+        self.assertIn("actor.svg", out)
+        self.assertNotIn("shape: person", out)
+
+    def test_include_and_extend(self):
+        out, warnings = convert(UC + "a -> b  # <<include>>\nc -> d: why  # <<extend>>\n")
+        self.assertIn('a -> b: "«include»" {', out)
+        self.assertIn("c -> d: why {", out)
+        self.assertEqual(out.count("stroke-dash: 4"), 2)
+        self.assertEqual(warnings, [])
+
+    def test_generalization_still_works(self):
+        out, _ = convert(UC + "# <<actor>>\nA\n# <<actor>>\nB\nA -> B  # <<gen>>\n")
+        self.assertIn("shape: triangle", out)
+
+    def test_undeclared_edge_ends_become_use_cases(self):
+        out, _ = convert(UC + "# <<actor>>\nOperator\nOperator -> Drive robot\n")
+        self.assertIn("Drive robot: {shape: oval", out)
+        self.assertNotIn("Operator: {shape: oval", out)
+
+    def test_use_case_oval_fits_its_name(self):
+        out, _ = convert(UC + "a: Drive robot\nb: Execute script\n", text_width=lambda t: 10 * len(t))
+        self.assertIn("width: 170; height: 40", block(out, "a"))  # 110 * 1.4 + 16
+        self.assertIn("width: 212; height: 40", block(out, "b"))
+
+    def test_user_styling_wins(self):
+        out, _ = convert(UC + 'uc: Thing {style.fill: "#ABCDEF"}\n')
+        uc = block(out, "uc")
+        self.assertLess(uc.index("shape: oval"), uc.index('style.fill: "#ABCDEF"'))
+
+    def test_keywords_and_classes_pass_through(self):
+        out, _ = convert(UC + "direction: right\n# <<entity>>\nA: {\n  shape: class\n  -x: int\n}\n")
+        self.assertIn("direction: right", out)
+        self.assertIn('"«entity»"', out)
+
+
 class PassThroughTests(unittest.TestCase):
     def test_config_and_other_shapes(self):
         src = 'vars: {\n  d2-config: {\n    layout-engine: elk\n  }\n}\ndirection: right\nnote: "hi" {shape: text}\n'

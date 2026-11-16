@@ -1,9 +1,11 @@
-"""Convert a plain d2 class diagram into the StarUML-styled d2 that `d2` renders.
+"""Convert a plain d2 class or use case diagram into the StarUML-styled d2 that `d2` renders.
 
 Input is ordinary d2: classes are `shape: class` blocks, stereotypes are comments
 (`# <<entity>>`) above a class or at the end of its first line, and relationship
-kinds are comments on edges (`A -> B  # <<dep>>`). Everything the converter does
-not recognise is copied through unchanged.
+kinds are comments on edges (`A -> B  # <<dep>>`). A top-level `# <<usecase diagram>>`
+switches to use case diagrams: actors, use cases (ovals), system boxes and
+«include»/«extend» edges. Everything the converter does not recognise is copied
+through unchanged.
 
 The scanner below only understands as much d2 as it needs: strings, block strings,
 comments, `{}` nesting, and statements separated by newlines or `;`.
@@ -12,6 +14,7 @@ comments, `{}` nesting, and statements separated by newlines or `;`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import style
@@ -22,6 +25,17 @@ STEREO_RE = re.compile(r"<<\s*([^<>]+?)\s*>>|«\s*([^«»]+?)\s*»")
 NO_RECURSE = {"vars", "classes", "style", "label", "icon", "near", "tooltip", "link"}
 # Lines inside a class that are d2 keywords rather than members.
 CLASS_KEYWORDS = {"shape", "label", "icon", "tooltip", "link", "near", "class"}
+# Reserved d2 keys: in a use case diagram, statements with these keys are never shapes.
+D2_KEYWORDS = CLASS_KEYWORDS | NO_RECURSE | {
+    "direction", "width", "height", "top", "left", "grid-rows", "grid-columns", "grid-gap",
+    "vertical-gap", "horizontal-gap", "layers", "scenarios", "steps", "constraint",
+    "source-arrowhead", "target-arrowhead",
+}  # fmt: skip
+
+# `# <<usecase diagram>>` anywhere at the top level picks the diagram type.
+DIAGRAM_TYPES = {"classdiagram": "class", "usecasediagram": "usecase"}
+ACTOR, USE_CASE, SYSTEM = "actor", "usecase", "system"
+UC_STEREOTYPES = {"actor": ACTOR, "usecase": USE_CASE, "system": SYSTEM, "subject": SYSTEM}
 
 
 # ---------------------------------------------------------------- scanning
@@ -234,33 +248,101 @@ def find_stereotype(*comments: str | None) -> str | None:
     return None
 
 
+def _normalize(name: str) -> str:
+    """`Use Case`, `use-case`, `use_case` -> `usecase`."""
+    return re.sub(r"[\s_-]+", "", name.lower())
+
+
+def diagram_type_of(comment: str) -> str | None:
+    """"usecase"/"class" if the comment is a diagram-type annotation."""
+    stereo = find_stereotype(comment)
+    return DIAGRAM_TYPES.get(_normalize(stereo)) if stereo else None
+
+
+def diagram_type(src: str) -> str:
+    for item in scan(src):
+        if item.kind == "comment" and (kind := diagram_type_of(item.text)):
+            return kind
+    return "class"
+
+
+def _without_strings(s: str) -> str:
+    """`s` with its quoted parts removed (to look for `.` or arrows outside them)."""
+    out, i = [], 0
+    while i < len(s):
+        if s[i] in "\"'":
+            i = _skip_string(s, i)
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+EDGE_OP_RE = re.compile(r"<->|<-|->|--")
+
+
+def edge_endpoints(key: str) -> list[str]:
+    """`A -> "B c" -> D` -> ['A', '"B c"', 'D']."""
+    parts, start, i = [], 0, 0
+    while i < len(key):
+        if key[i] in "\"'":
+            i = _skip_string(key, i)
+            continue
+        m = EDGE_OP_RE.match(key, i)
+        if m:
+            parts.append(key[start:i].strip())
+            start = i = m.end()
+            continue
+        i += 1
+    parts.append(key[start:].strip())
+    return parts
+
+
+def _simple_key(key: str) -> str | None:
+    """Lower-cased, unquoted key if it names a shape in this scope (no `.`, not a keyword)."""
+    if not key or "." in _without_strings(key) or key.startswith(("_", "(", "...")):
+        return None
+    name = unquote(key).lower()
+    return None if name in D2_KEYWORDS else name
+
+
 # ---------------------------------------------------------------- converting
 
 
 @dataclass
 class Converter:
     warnings: list[str] = field(default_factory=list)
+    usecase: bool = False  # converting a use case diagram
+    text_width: Callable[[str], float] | None = None  # px width of a bold name
 
     def convert(self, src: str, indent: str = "") -> str:
         out: list[str] = []
         pending: list[str] = []  # comment lines directly above the next statement
-        for item in scan(src):
+        items = scan(src)
+        for item in items:
             if item.kind == "blank":
                 out.append("")
                 pending = []
             elif item.kind == "comment":
                 out.append(f"{indent}# {item.text}")
-                pending.append(item.text)
+                if not diagram_type_of(item.text):
+                    pending.append(item.text)
             else:
                 stereo = find_stereotype(item.trailing, *reversed(pending))
                 out.append(self._statement(item, stereo, indent))
                 pending = []
+        if self.usecase:
+            out = self._undeclared_use_cases(items, indent) + out
         return "\n".join(out)
 
     def _statement(self, item: Item, stereo: str | None, indent: str) -> str:
         head, body, tail = split_block(item.text)
         if is_edge(head):
             return self._edge(head, body, tail, stereo, indent)
+        if self.usecase:
+            node = self._uc_node(head, body, tail, stereo, indent)
+            if node is not None:
+                return node
         key, _ = split_colon(head)
         if self._is_class(body, stereo) and key.lower() not in NO_RECURSE:
             return self._class(head, body or "", stereo, indent)
@@ -387,24 +469,103 @@ class Converter:
     # -- edges
 
     def _edge(self, head: str, body: str | None, tail: str, stereo: str | None, indent: str) -> str:
+        key, label = split_colon(head)
         fields = [style.EDGE_BASE]
-        if stereo is not None:
+        uc_kind = style.uc_edge_kind(stereo) if self.usecase and stereo is not None else None
+        if uc_kind is not None:
+            name, kind_fields = uc_kind
+            fields += kind_fields
+            label = label or d2_string(f"«{name}»")
+        elif stereo is not None:
             kind_fields = style.edge_kind(stereo)
             if kind_fields is None:
                 self.warnings.append(f"unknown relationship <<{stereo}>> on: {head.strip()}")
             else:
                 fields += kind_fields
+        elif self.usecase:  # a plain association: open arrow(s) where d2 would draw a head
+            ops = _without_strings(key)
+            if "->" in ops:
+                fields.append("target-arrowhead.shape: arrow")
+            if "<-" in ops:
+                fields.append("source-arrowhead.shape: arrow")
         inner = "; ".join(fields)
-        head = head.rstrip()
+        head = f"{key}: {label}" if label else f"{key}:"
         if body is not None:
             return f"{indent}{head} {{{inner}\n{body}\n}}{tail}"
-        _, label = split_colon(head)
-        if label is None:
-            return f"{indent}{head}: {{{inner}}}"
         return f"{indent}{head} {{{inner}}}"
 
+    # -- use case diagrams
 
-def convert(src: str) -> tuple[str, list[str]]:
-    """Plain d2 -> styled d2. Returns the d2 text and a list of warnings."""
-    converter = Converter()
+    def _uc_node(self, head: str, body: str | None, tail: str, stereo: str | None, indent: str) -> str | None:
+        """Actor, use case or system boundary; None for anything else (keywords, classes)."""
+        key, label = split_colon(head)
+        if _simple_key(key) is None:
+            return None
+        statements = [item.text for item in scan(body or "") if item.kind == "stmt"]
+        shape, has_children = None, False
+        for text in statements:
+            s_head = split_block(text)[0]
+            s_key, s_value = split_colon(s_head)
+            if s_key.lower() == "shape":
+                shape = unquote(s_value or "").lower()
+            elif is_edge(s_head) or s_key.split(".")[0].lower() not in D2_KEYWORDS:
+                has_children = True
+
+        kind = UC_STEREOTYPES.get(_normalize(stereo)) if stereo else None
+        if (stereo is not None and kind is None) or shape == "class":
+            return None  # a class (with its own stereotype) inside the use case diagram
+        if shape == "person":
+            kind = ACTOR
+        kind = kind or (SYSTEM if has_children else USE_CASE)
+
+        pad = indent + "  "
+        lines = [f"{indent}{key}: {label} {{" if label else f"{indent}{key}: {{"]
+        if kind == SYSTEM:
+            lines += [pad + f for f in style.SYSTEM]
+            if body is not None:
+                lines.append(self.convert(body, pad))
+        else:
+            name = unquote(label) if label else unquote(key)
+            for text in statements:
+                s_key, s_value = split_colon(split_block(text)[0])
+                if s_key.lower() == "label" and s_value:
+                    name = unquote(s_value)
+            lines += [pad + f for f in (style.ACTOR if kind == ACTOR else self._use_case(name))]
+            lines += [pad + t for t in statements if split_colon(split_block(t)[0])[0].lower() != "shape"]
+        lines.append(f"{indent}}}{tail}")
+        return "\n".join(lines)
+
+    def _undeclared_use_cases(self, items: list[Item], indent: str) -> list[str]:
+        """Edge ends never declared in this scope (`Operator -> Drive robot`) are use cases.
+
+        They go at the top of the scope, so anything the user sets later still wins."""
+        declared: set[str] = set()
+        ends: list[str] = []
+        for item in items:
+            if item.kind != "stmt":
+                continue
+            head = split_block(item.text)[0]
+            key, _ = split_colon(head)
+            if is_edge(head):
+                ends += [e for e in edge_endpoints(key) if _simple_key(e)]
+            elif name := _simple_key(key):
+                declared.add(name)
+        lines = []
+        for end in ends:
+            name = _simple_key(end)
+            if name not in declared:
+                declared.add(name)
+                lines.append(f"{indent}{end}: {{{'; '.join(self._use_case(unquote(end)))}}}")
+        return lines
+
+    def _use_case(self, name: str) -> list[str]:
+        rows = name.replace("\\n", "\n").split("\n")
+        measure = self.text_width or (lambda text: len(text) * style.APPROX_CHAR_WIDTH)
+        return style.use_case(max(measure(row) for row in rows), len(rows))
+
+
+def convert(src: str, text_width: Callable[[str], float] | None = None) -> tuple[str, list[str]]:
+    """Plain d2 -> styled d2. Returns the d2 text and a list of warnings.
+    `text_width` measures a bold name in px (to fit use case ovals to it)."""
+    converter = Converter(usecase=diagram_type(src) == "usecase", text_width=text_width)
     return converter.convert(src) + "\n", converter.warnings

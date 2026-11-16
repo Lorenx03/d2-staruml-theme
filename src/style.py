@@ -112,3 +112,47 @@ EDGE_ALIASES = {
 def edge_kind(name: str) -> list[str] | None:
     key = name.strip().lower()
     return EDGE_KINDS.get(EDGE_ALIASES.get(key, key))
+
+
+# ---------------------------------------------------------------- use case diagrams
+# Names are bold, so they use the italic slot (see the font trick above).
+_BOLD_TEXT = f"font-size: {FONT_SIZE}; font-color: {BLACK}; bold: false; italic: true"
+_OUTLINE = 'stroke: "#000000"; stroke-width: 1; fill: "#FFFFFF"; shadow: true'
+
+ACTOR_ICON = ICON_DIR / "actor.svg"
+ACTOR = [f'shape: image; icon: "{ACTOR_ICON}"; width: 34; height: 68', f"style: {{{_BOLD_TEXT}}}"]
+
+
+def use_case(name_width: float, lines: int = 1) -> list[str]:
+    """An oval fitted to its name (d2's own ovals leave a lot of room around it)."""
+    width = round(name_width * UC_WIDTH_FACTOR + UC_WIDTH_EXTRA)
+    height = UC_HEIGHT + UC_LINE_HEIGHT * (lines - 1)
+    return ["shape: oval", f"width: {width}; height: {height}", f"style: {{{_OUTLINE}; {_BOLD_TEXT}}}"]
+
+
+UC_WIDTH_FACTOR, UC_WIDTH_EXTRA = 1.4, 16  # oval width from the name's width
+UC_HEIGHT, UC_LINE_HEIGHT = 40, 16  # one line of text, and each further one
+# ELK settings for use case diagrams (d2's defaults in brackets)
+UC_ELK = {
+    # room inside the system box [50 on every side]: more at the top keeps edges to
+    # actors placed high up inside the box, less on the sides makes it narrower
+    "--elk-padding": "[top=80,left=30,bottom=50,right=30]",
+    "--elk-nodeNodeBetweenLayers": "40",  # gap between columns of shapes [70]
+    "--elk-edgeNodeBetweenLayers": "20",  # gap between edges and shapes in it [40]
+}
+APPROX_CHAR_WIDTH = 0.62 * FONT_SIZE  # without a font file to measure with
+SYSTEM = ["shape: rectangle", "label.near: top-center", f"style: {{{_OUTLINE}; {_BOLD_TEXT}}}"]
+
+# Use case relationships: dashed open arrow labelled with the stereotype.
+UC_EDGE_KINDS: dict[str, list[str]] = {
+    "include": ["style.stroke-dash: 4", "target-arrowhead.shape: arrow"],
+    "extend": ["style.stroke-dash: 4", "target-arrowhead.shape: arrow"],
+}
+UC_EDGE_ALIASES = {"includes": "include", "extends": "extend"}
+
+
+def uc_edge_kind(name: str) -> tuple[str, list[str]] | None:
+    """(canonical name, d2 fields) for «include»/«extend», None for anything else."""
+    key = name.strip().lower()
+    key = UC_EDGE_ALIASES.get(key, key)
+    return (key, UC_EDGE_KINDS[key]) if key in UC_EDGE_KINDS else None

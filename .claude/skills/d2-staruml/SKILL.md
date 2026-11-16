@@ -1,13 +1,14 @@
 ---
 name: d2-staruml
-description: Write UML class diagrams in d2 and render them to StarUML-style SVG/PNG with the `d2-staruml` command. Use when the user asks for a class diagram, a BCE (boundary/control/entity) diagram, a StarUML-looking diagram, or to render/compile .d2 files to SVG.
+description: Write UML class diagrams and use case diagrams in d2 and render them to StarUML-style SVG/PNG with the `d2-staruml` command. Use when the user asks for a class diagram, a use case diagram, a BCE (boundary/control/entity) diagram, a StarUML-looking diagram, or to render/compile .d2 files to SVG.
 ---
 
 # d2-staruml
 
-`d2-staruml` turns plain d2 class diagrams into StarUML-looking SVGs:
-bold class names, compartment lines, `«stereotype»` lines with BCE icons
-and colours, and UML arrowheads. It needs `d2` on the PATH.
+`d2-staruml` turns plain d2 class diagrams and use case diagrams into
+StarUML-looking SVGs: bold class names, compartment lines, `«stereotype»`
+lines with BCE icons and colours, UML arrowheads, stick-figure actors and
+use case ellipses. It needs `d2` on the PATH.
 
 If `command -v d2-staruml` finds nothing, tell the user the tool isn't
 installed. Don't install it yourself and don't fall back to plain `d2`:
@@ -113,6 +114,47 @@ Write `# <<kind>>` at the end of the edge.
 - Labels and multiplicities are plain d2:
   `A -> B: owns {source-arrowhead.label: 1; target-arrowhead.label: "0..*"}  # <<comp>>`.
 - Packages are plain d2 containers: `pkg: { … }`.
+
+### Use case diagrams
+
+Start the file with `# <<usecase diagram>>`. Without it, the file is a class
+diagram.
+
+```d2
+# <<usecase diagram>>
+vars: { d2-config: { layout-engine: elk } }
+direction: right
+
+# <<actor>>
+Operator
+
+Jazebo: {
+  drive: Drive robot
+  script: Execute script
+  pair: Pair with robot
+
+  script -> drive  # <<extend>>
+  drive -> pair    # <<include>>
+}
+
+# <<actor>>
+Motion: Motion-control system
+
+Operator -> Jazebo.drive
+Jazebo.drive -> Motion
+```
+
+- `# <<actor>>` above a shape (or `shape: person`): stick figure.
+- A shape with shapes inside: system box, name at the top.
+- Any other shape: use case (ellipse). An undeclared edge end
+  (`Operator -> Drive robot`) also becomes a use case, so always declare
+  actors.
+- `A -> B`: association with open arrow. `A -- B`: no arrow.
+- `# <<include>>` / `# <<extend>>`: dashed open arrow with the «include» /
+  «extend» label. «extend» points from the extending use case to the base
+  one. `# <<gen>>` works for actor/use case generalization.
+- Use ELK for the usual StarUML layout: primary actors on the left, the
+  system in the middle, secondary actors on the right.
 
 ### Layout
 

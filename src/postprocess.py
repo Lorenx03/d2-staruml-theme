@@ -1,7 +1,7 @@
 """Touch up a d2 SVG so it looks more like StarUML.
 
 d2 has no options for these, so they are patched in the SVG text:
-  - open "V" arrowheads instead of d2's filled `arrow` heads
+  - open "V" arrowheads instead of d2's filled `arrow` heads (at either end)
   - a soft grey drop shadow instead of d2's blue-grey one
   - optionally (for PNG via rsvg-convert, which can't read the fonts d2 embeds)
     point the text at the font family that `fonts.fontconfig_env` sets up
@@ -30,6 +30,18 @@ SHADOW_DX, SHADOW_DY = "4", "4"
 ARROW = re.compile(r'<polygon points="0,0 ([\d.]+),([\d.]+) 0,([\d.]+) [\d.]+,\2" fill="([^"]+)"[^>]*/>')
 
 
+# The same head at the start of a line (`A <- B`): "0,H/2 L,0 N,H/2 L,H", tip at 0.
+ARROW_START = re.compile(r'<polygon points="0,([\d.]+) ([\d.]+),0 [\d.]+,\1 \2,([\d.]+)" fill="([^"]+)"[^>]*/>')
+
+
+def _open_arrow_start(m: re.Match[str]) -> str:
+    mid_y, length, h, color = m.group(1), float(m.group(2)), float(m.group(3)), m.group(4)
+    return (
+        f'<polyline points="{length - 0.5:g},0.5 0,{mid_y} {length - 0.5:g},{h - 0.5:g}" '
+        f'fill="none" stroke="{color}" stroke-width="1" stroke-linejoin="miter" />'
+    )
+
+
 def _open_arrow(m: re.Match[str]) -> str:
     tip_x, mid_y, h, color = m.group(1), m.group(2), m.group(3), m.group(4)
     return (
@@ -40,6 +52,7 @@ def _open_arrow(m: re.Match[str]) -> str:
 
 def postprocess_svg(svg: str, png_fonts: bool = False) -> str:
     svg = ARROW.sub(_open_arrow, svg)
+    svg = ARROW_START.sub(_open_arrow_start, svg)
     if png_fonts:
         head, _, _ = svg.rpartition("</svg>")
         svg = head + PNG_FONTS_CSS + "</svg>"

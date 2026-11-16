@@ -1,0 +1,58 @@
+# <<usecase diagram>>
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+direction: right
+
+# <<actor>>
+Operator
+
+# <<actor>>
+Analyst
+
+Jazebo: {
+  drive: Drive robot
+  script: Execute script
+  configure: Configure robot
+  pair: Pair with robot
+  record: Record mission
+  telemetry: View telemetry
+  replay: Replay mission
+  analyze: Analyze mission
+
+  script -> drive  # <<extend>>
+  drive -> pair  # <<include>>
+  configure -> pair  # <<include>>
+  telemetry -> pair  # <<include>>
+  record -> telemetry  # <<extend>>
+  analyze -> replay  # <<extend>>
+}
+
+# <<actor>>
+Motion: Motion-control system
+
+# <<actor>>
+Pairing: Pairing Notification system
+
+# <<actor>>
+Sources: Robot data sources
+
+# <<actor>>
+Discovery: Service discovery channel
+
+Operator -> Jazebo.drive
+Operator -> Jazebo.configure
+Operator -> Jazebo.telemetry
+Analyst -> Jazebo.telemetry
+Analyst -> Jazebo.replay
+
+Jazebo.drive -> Motion
+Jazebo.configure -> Motion
+Jazebo.configure -> Sources
+Jazebo.pair -> Pairing
+Jazebo.pair -> Discovery
+Jazebo.telemetry -> Sources

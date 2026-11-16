@@ -1,4 +1,4 @@
-"""`d2-staruml`: render plain d2 class diagrams in StarUML style.
+"""`d2-staruml`: render plain d2 class and use case diagrams in StarUML style.
 
 Diagrams live in diagrams/; renders go to out/ (same sub-folders).
 
@@ -22,9 +22,10 @@ import tempfile
 import time
 from pathlib import Path
 
-from .convert import convert
-from .fonts import DEFAULT_FONT, FontError, available_fonts, find_font, fontconfig_env
+from .convert import convert, diagram_type
+from .fonts import DEFAULT_FONT, FontError, available_fonts, find_font, fontconfig_env, text_width
 from .postprocess import postprocess_file
+from .style import FONT_SIZE, UC_ELK
 
 DEFAULT_OUT_DIR = "out"
 DEFAULT_DIAGRAMS_DIR = "diagrams"
@@ -34,7 +35,7 @@ class RenderError(Exception):
     """A diagram could not be rendered (the others still are)."""
 
 
-def d2_command(args: argparse.Namespace) -> list[str]:
+def d2_command(args: argparse.Namespace, source: Path) -> list[str]:
     """d2 with the font trick: d2 0.9 measures all text with the "bold" font, so
     the Regular font goes in the bold slot (exact measuring) and the Bold font in
     the italic slot (class names use italic to come out bold)."""
@@ -42,6 +43,9 @@ def d2_command(args: argparse.Namespace) -> list[str]:
     cmd = ["d2", "--pad", "20"]
     if args.layout:
         cmd += ["--layout", args.layout]
+    if diagram_type(source.read_text(encoding="utf-8")) == "usecase":
+        # a narrower layout, and edges kept inside the system box (dagre ignores these)
+        cmd += [part for flag in UC_ELK.items() for part in flag]
     cmd += [
         "--font-regular", str(font.regular),
         "--font-bold", str(font.regular),
@@ -55,9 +59,18 @@ def fail(message: str) -> None:
     sys.exit(1)
 
 
-def write_converted(source: Path, target: Path) -> str:
+def measure(args: argparse.Namespace):
+    """Width of a bold name in the chosen font (None if the file can't be read)."""
+    try:
+        text_width(args.font.bold, "x", FONT_SIZE)
+    except Exception:  # an unusual font file: the converter estimates instead
+        return None
+    return lambda text: text_width(args.font.bold, text, FONT_SIZE)
+
+
+def write_converted(args: argparse.Namespace, source: Path, target: Path) -> str:
     """Convert `source` into `target`; returns the converted text."""
-    text, warnings = convert(source.read_text(encoding="utf-8"))
+    text, warnings = convert(source.read_text(encoding="utf-8"), measure(args))
     for warning in warnings:
         print(f"d2-staruml: warning: {warning}", file=sys.stderr)
     target.write_text(text, encoding="utf-8")
@@ -98,11 +111,11 @@ def render(args: argparse.Namespace, source: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     styled = styled_path(source)
     try:
-        write_converted(source, styled)
+        write_converted(args, source, styled)
         if output.suffix.lower() == ".png":
-            render_png(args, styled, output)
+            render_png(args, source, styled, output)
         else:
-            run_d2(d2_command(args) + [str(styled), str(output)])
+            run_d2(d2_command(args, source) + [str(styled), str(output)])
             postprocess_file(output)
         if args.emit_d2:
             shutil.copyfile(styled, args.emit_d2)
@@ -111,12 +124,12 @@ def render(args: argparse.Namespace, source: Path) -> None:
     print(f"wrote {output}", flush=True)
 
 
-def render_png(args: argparse.Namespace, styled: Path, output: Path) -> None:
+def render_png(args: argparse.Namespace, source: Path, styled: Path, output: Path) -> None:
     if not shutil.which("rsvg-convert"):
         raise RenderError("PNG output needs rsvg-convert (brew install librsvg)")
     with tempfile.TemporaryDirectory() as tmp:
         svg = Path(tmp) / "out.svg"
-        run_d2(d2_command(args) + [str(styled), str(svg)])
+        run_d2(d2_command(args, source) + [str(styled), str(svg)])
         postprocess_file(svg, png_fonts=True)
         env = fontconfig_env(args.font, Path(tmp))
         subprocess.run(["rsvg-convert", "--zoom", "2", str(svg), "-o", str(output)], check=True, env=env)
@@ -130,11 +143,11 @@ def watch(args: argparse.Namespace, source: Path) -> None:
 
     signal.signal(signal.SIGTERM, stop)  # clean up the temp file when killed, too
     styled = styled_path(source)
-    last = write_converted(source, styled)
+    last = write_converted(args, source, styled)
     mtime = source.stat().st_mtime
     preview_dir = tempfile.TemporaryDirectory()  # d2 -w writes an SVG; keep it out of the way
     preview = Path(preview_dir.name) / "preview.svg"
-    d2 = subprocess.Popen(d2_command(args) + ["--watch", str(styled), str(preview)])
+    d2 = subprocess.Popen(d2_command(args, source) + ["--watch", str(styled), str(preview)])
     try:
         while d2.poll() is None:
             time.sleep(0.4)
@@ -143,7 +156,7 @@ def watch(args: argparse.Namespace, source: Path) -> None:
                 continue
             mtime = current
             try:
-                text, warnings = convert(source.read_text(encoding="utf-8"))
+                text, warnings = convert(source.read_text(encoding="utf-8"), measure(args))
             except Exception as exc:  # keep watching while the file is half-edited
                 print(f"d2-staruml: could not convert: {exc}", file=sys.stderr)
                 continue
@@ -191,7 +204,7 @@ def find_diagrams(diagrams_dir: Path, names: list[str]) -> list[Path]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="d2-staruml",
-        description="Render plain d2 class diagrams in StarUML style. "
+        description="Render plain d2 class and use case diagrams in StarUML style. "
         "Without arguments, renders every diagram in diagrams/ to out/. "
         "Given a folder (d2-staruml path/to/dir -o svgs/), renders every diagram in it.",
     )
