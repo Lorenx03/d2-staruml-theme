@@ -213,4 +213,6 @@ edges in declaration order.
 - Abstract classes can't be shown in italics.
 - Multiplicities come out bold.
 - Edges are curved (dagre) or right-angled (ELK), never straight diagonals.
-- Guards of flows leaving the same decision can overlap: shorten one.
+- Edge labels that overlap, or sit across another edge's line, are moved
+  along their own edge automatically; if one still
+  overlaps (no free spot on its edge), shorten it.

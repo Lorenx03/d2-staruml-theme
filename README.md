@@ -366,9 +366,9 @@ Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored
   italic, and the font trick turns italic into bold.
 - d2's free layout engines draw either curves (dagre) or right angles (ELK),
   not StarUML's straight diagonal lines.
-- In activity diagrams, the guards of two flows leaving the same decision
-  can overlap: the layout engine puts both labels at the same height, and
-  reordering the edges doesn't change that. Shorten one of them.
+- Edge labels that cover each other, or another edge's line, are moved (see *Post-process*
+  below). When an edge has no free spot left, its label stays where it was:
+  shorten it.
 - A reference to an edge that the converter turned round
   (`(error -> retry)[0].style…`) no longer finds it.
 - An attribute written without a visibility prefix and named like a d2
@@ -413,6 +413,12 @@ tests/            # uv run python -m unittest discover -s tests
 3. **Post-process.** `postprocess.py` edits the SVG:
    - replaces d2's filled arrowheads with open ones
    - turns the blue-grey shadow grey
+   - moves an edge label that covers another one, or hides another edge's
+     line: it slides along its own edge to the nearest spot clear of other
+     labels and shapes (and, if there is one, of other edges' lines), together with the rectangle in d2's
+     `<mask>` that hides the line under it. The layout engines put labels
+     on top of each other, e.g. the guards of two flows leaving a decision
+     at the same height.
    - activity diagrams: stretches fork/join bars (shapes with the d2 class
      `staruml-bar`) to span their flows and straightens those flows; adds
      the dot of final nodes and the cross of flow-final nodes (classes

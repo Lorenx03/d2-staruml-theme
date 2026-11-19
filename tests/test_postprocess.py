@@ -79,5 +79,45 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r" L ", out)), 2)
 
 
+class LabelTests(unittest.TestCase):
+    def svg(self, *edges: tuple[str, str, float, float, float]) -> str:
+        """Edges as (path, text, label centre x, label centre y, label width)."""
+        rects = "".join(
+            f'<rect x="{x - w / 2:g}" y="{y - 8:g}" width="{w:g}" height="16" fill="black"></rect>' for _, _, x, y, w in edges
+        )
+        paths = "".join(
+            f'<g class="e{i}"><path d="{d}" class="connection" /><text x="{x:g}" y="{y + 5:g}" class="text">{t}</text></g>'
+            for i, (d, t, x, y, w) in enumerate(edges)
+        )
+        return f'<svg><mask id="m"><rect x="0" y="0" width="999" height="999" fill="white"></rect>{rects}</mask>{paths}</svg>'
+
+    def test_covered_label_slides_along_its_edge(self):
+        # two edges leave (100, 0); their labels sit at the same height and cover each other
+        a = ("M 100 0 L 100 50 L 300 50 L 300 200", "[a]", 200, 50, 160)
+        b = ("M 100 0 L 100 50 L 0 50 L 0 200", "[b]", 60, 50, 160)
+        out = postprocess_svg(self.svg(a, b))
+        self.assertIn('<text x="200" y="55" class="text">[a]</text>', out)  # the first one stays
+        moved = re.search(r'<text x="([-\d.]+)" y="([-\d.]+)" class="text">\[b\]</text>', out)
+        x, y = float(moved.group(1)), float(moved.group(2)) - 5  # its centre
+        self.assertTrue(x + 80 + 4 <= 200 - 80 or y - 8 >= 50 + 8 + 4)  # clear of [a]
+        self.assertTrue(y == 50 and 0 <= x <= 100 or x == 0 and 50 <= y <= 200)  # still on its own edge
+        self.assertIn(f'<rect x="{x - 80:g}" y="{y - 8:g}" width="160" height="16" fill="black">', out)
+
+    def test_label_hiding_another_line_moves_off_it(self):
+        # [b] is long and centred on its horizontal stretch, right over [a]'s vertical line
+        a = ("M 100 0 L 100 300", "[a]", 100, 150, 30)
+        b = ("M 0 50 L 200 50 L 200 300", "[a long guard]", 100, 50, 120)
+        out = postprocess_svg(self.svg(a, b))
+        moved = re.search(r'<text x="([-\d.]+)" y="([-\d.]+)" class="text">\[a long guard\]</text>', out)
+        x, y = float(moved.group(1)), float(moved.group(2)) - 5
+        self.assertTrue(x + 60 + 4 <= 100 or x - 60 - 4 >= 100)  # clear of [a]'s line
+        self.assertTrue(y == 50 and 0 <= x <= 200 or x == 200 and 50 <= y <= 300)  # still on its own edge
+
+    def test_labels_apart_are_left_alone(self):
+        a = ("M 0 0 L 0 200", "[a]", 0, 100, 40)
+        b = ("M 300 0 L 300 200", "[b]", 300, 100, 40)
+        self.assertEqual(postprocess_svg(self.svg(a, b)), self.svg(a, b))
+
+
 if __name__ == "__main__":
     unittest.main()

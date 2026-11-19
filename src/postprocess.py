@@ -5,6 +5,8 @@ d2 has no options for these, so they are patched in the SVG text:
   - a soft grey drop shadow instead of d2's blue-grey one
   - activity diagrams: fork/join bars stretched to span their flows, which run
     straight into them; the dot of final nodes and the cross of flow-final nodes
+  - an edge label that covers another one slides along its own edge to the nearest
+    free spot
   - optionally (for PNG via rsvg-convert, which can't read the fonts d2 embeds)
     point the text at the font family that `fonts.fontconfig_env` sets up
 """
@@ -244,8 +246,121 @@ def _final_marks(m: re.Match[str]) -> str:
     return m.group(0) + mark
 
 
+# ---------------------------------------------------------------- overlapping edge labels
+# d2 centres an edge's label on its line (the <text> right after the edge's <path>) and
+# hides the line under it with a black <rect> in the diagram's <mask>. The layout engine
+# can put two labels in the same place, e.g. the guards of two flows leaving a decision
+# at the same height, or put a long label across another edge's line, which the mask then
+# hides. Such a label slides along its own edge to the nearest free spot, rect and all.
+
+LABEL = re.compile(r'(<path d="([^"]*)"[^>]*class="connection[^>]*/>)(<text x=")([-\d.]+)(" y=")([-\d.]+)("[^>]*>)')
+MASK_RECT = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="([\d.]+)" fill="black"></rect>')
+LABEL_GAP = 4  # free space kept around a moved label
+LABEL_STEP = 2  # px between the spots tried along the edge
+LABEL_ENDS = 12  # spots this close to either end of the edge (arrowheads, shapes) are not tried
+PATH_TOKEN = re.compile(r"[MLCSmlcs]|-?\d+(?:\.\d+)?")
+
+
+def _polyline(d: str) -> list[tuple[float, float]]:
+    """The points of a d2 edge path (M, L, C, S; curves sampled)."""
+    tokens = PATH_TOKEN.findall(d)
+    points: list[tuple[float, float]] = []
+    i, command = 0, "M"
+    while i < len(tokens):
+        if tokens[i].isalpha():
+            command = tokens[i].upper()
+            i += 1
+            continue
+        size = {"M": 2, "L": 2, "S": 4, "C": 6}.get(command, 2)
+        values = [float(t) for t in tokens[i : i + size]]
+        i += size
+        if len(values) < size:
+            break
+        if command == "C" and points:
+            (x0, y0), (x1, y1, x2, y2, x3, y3) = points[-1], values
+            for k in range(1, 9):
+                t = k / 8
+                a, b, c, e = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t**2, t**3
+                points.append((a * x0 + b * x1 + c * x2 + e * x3, a * y0 + b * y1 + c * y2 + e * y3))
+        else:  # M, L, and the short rounded corners (S) of ELK's right angles
+            points.append((values[-2], values[-1]))
+    return points
+
+
+def _spots(points: list[tuple[float, float]]):
+    """Points every LABEL_STEP px along a polyline, away from its ends."""
+    lengths = [math.dist(a, b) for a, b in zip(points, points[1:])]
+    total = sum(lengths)
+    at = LABEL_ENDS
+    while at <= total - LABEL_ENDS:
+        walked = 0.0
+        for (a, b), length in zip(zip(points, points[1:]), lengths):
+            if walked + length >= at and length > 0:
+                t = (at - walked) / length
+                yield a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])
+                break
+            walked += length
+        at += LABEL_STEP
+
+
+def _overlap(a: Box, b: Box, gap: float = 0) -> bool:
+    return a[0] < b[2] + gap and a[2] > b[0] - gap and a[1] < b[3] + gap and a[3] > b[1] - gap
+
+
+def _on_line(box: Box, points: list[tuple[float, float]]) -> bool:
+    """Whether a polyline runs through `box` (an edge's own label, not an arrowhead's)."""
+    return any(_crosses(box, *a, *b) or _inside(box, *a) for a, b in zip(points, points[1:]))
+
+
+def _untangle_labels(svg: str) -> str:
+    rects = [(m, tuple(float(g) for g in m.groups())) for m in MASK_RECT.finditer(svg)]
+    labels = []  # [match, polyline, rect match, box]
+    for m in LABEL.finditer(svg):
+        x, y, points = float(m.group(4)), float(m.group(6)), _polyline(m.group(2))
+        for rect_match, (rx, ry, rw, rh) in rects:
+            if abs(rx + rw / 2 - x) < 1 and 0 <= y - ry <= rh and _on_line((rx, ry, rx + rw, ry + rh), points):
+                labels.append([m, points, rect_match, (rx, ry, rx + rw, ry + rh)])
+                break
+    shapes = [_box(m.group(3)) for m in SHAPE_GROUP.finditer(svg)]
+    lines = [label[1] for label in labels]
+    edits: list[tuple[int, int, str]] = []
+    for i, (m, points, rect_match, box) in enumerate(labels):
+        others = [label[3] for j, label in enumerate(labels) if j != i]
+        covers_label = any(_overlap(box, o) for o in [label[3] for label in labels[:i]])
+        hides_line = any(_on_line(box, line) for j, line in enumerate(lines) if j != i)
+        if not covers_label and not hides_line:
+            continue
+        w, h = box[2] - box[0], box[3] - box[1]
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+        def fits(spot: tuple[float, float], strict: bool) -> bool:
+            b = (spot[0] - w / 2, spot[1] - h / 2, spot[0] + w / 2, spot[1] + h / 2)
+            if any(_overlap(b, o, LABEL_GAP) for o in others) or any(_overlap(b, s, LABEL_GAP) for s in shapes):
+                return False
+            # strict: the mask would also hide no other edge's line (nor touch it)
+            g = (b[0] - LABEL_GAP, b[1] - LABEL_GAP, b[2] + LABEL_GAP, b[3] + LABEL_GAP)
+            return not strict or not any(_on_line(g, line) for j, line in enumerate(lines) if j != i)
+
+        spots = sorted(_spots(points), key=lambda p: math.dist(p, (cx, cy)))
+        spot = next((p for p in spots if fits(p, True)), None)
+        if spot is None and covers_label:  # better hiding a line than another label
+            spot = next((p for p in spots if fits(p, False)), None)
+        if spot is None:
+            continue
+        dx, dy = spot[0] - cx, spot[1] - cy
+        labels[i][3] = (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
+        edits.append((m.start(4), m.end(4), f"{float(m.group(4)) + dx:g}"))
+        edits.append((m.start(6), m.end(6), f"{float(m.group(6)) + dy:g}"))
+        edits.append((rect_match.start(1), rect_match.end(1), f"{box[0] + dx:g}"))
+        edits.append((rect_match.start(2), rect_match.end(2), f"{box[1] + dy:g}"))
+    for start, end, text in sorted(edits, reverse=True):
+        svg = svg[:start] + text + svg[end:]
+    return svg
+
+
 def postprocess_svg(svg: str, png_fonts: bool = False) -> str:
     svg = _activity(svg)
+    svg = _untangle_labels(svg)
     svg = ARROW.sub(_open_arrow, svg)
     svg = ARROW_START.sub(_open_arrow_start, svg)
     if png_fonts:
