@@ -41,9 +41,13 @@ def d2_command(args: argparse.Namespace, source: Path) -> list[str]:
     the italic slot (class names use italic to come out bold)."""
     font = args.font
     cmd = ["d2", "--pad", "20"]
+    text = source.read_text(encoding="utf-8")
+    kind = diagram_type(text)
     if args.layout:
         cmd += ["--layout", args.layout]
-    if diagram_type(source.read_text(encoding="utf-8")) == "usecase":
+    elif kind == "activity" and not re.search(r"\blayout-engine\s*:", text):
+        cmd += ["--layout", "elk"]  # right angles, like StarUML (loops are handled by the converter)
+    if kind == "usecase":
         # a narrower layout, and edges kept inside the system box (dagre ignores these)
         cmd += [part for flag in UC_ELK.items() for part in flag]
     cmd += [

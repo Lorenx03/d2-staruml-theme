@@ -49,6 +49,19 @@ class ActivityTests(unittest.TestCase):
         out = postprocess_svg(f"<svg>{beside}{self.BAR}{flow}</svg>")
         self.assertIn('<rect x="15" y="100" width="145" height="5" />', out)  # 5 + 10 .. 160
 
+    def test_flow_is_kept_when_a_straight_line_would_cross_a_shape(self):
+        between = f'<g class="{b64("box")}"><g class="shape" ><rect x="200" y="140" width="80" height="30" /></g></g>'
+        flow = self.edge("(fork -&gt; b)[0]", "M 150 105 C 160 130 300 150 240 200")
+        out = postprocess_svg(f"<svg>{between}{self.BAR}{flow}</svg>")
+        self.assertIn('d="M 150 105 C 160 130 300 150 240 200"', out)
+        self.assertIn('<rect x="100" y="100" width="60" height="5" />', out)
+
+    def test_bar_is_not_stretched_across_a_shape(self):
+        beside = f'<g class="{b64("box")}"><g class="shape" ><rect x="180" y="90" width="40" height="30" /></g></g>'
+        flow = self.edge("(fork -&gt; b)[0]", "M 150 105 C 160 130 300 150 240 200")
+        out = postprocess_svg(f"<svg>{beside}{self.BAR}{flow}</svg>")
+        self.assertIn('d="M 150 105 C 160 130 300 150 240 200"', out)
+
     def test_flows_inside_a_container(self):
         bar = self.BAR.replace(b64("fork"), b64("pkg.fork"))
         flow = self.edge("pkg.(fork -&gt; a)[0]", "M 130 105 C 100 130 20 150 20 200")

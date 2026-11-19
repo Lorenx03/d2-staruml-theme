@@ -224,6 +224,52 @@ class ActivityTests(unittest.TestCase):
         self.assertIn("border-radius: 8", block(out, "  a"))
 
 
+def line(d2: str, start: str) -> str:
+    """The converted line that starts with `start`."""
+    return next(ln for ln in d2.splitlines() if ln.lstrip().startswith(start))
+
+
+class LoopTests(unittest.TestCase):
+    def test_edge_closing_a_loop_is_written_backwards(self):
+        out, _ = convert(AD + "s  # <<initial>>\ns -> m\nm -> a\na -> d\nd -> a2: retry\na2 -> m\nd -> e\n")
+        self.assertIn('m <- a2: {', out)
+        self.assertIn("source-arrowhead.shape: arrow", line(out, "m <- a2"))
+        self.assertNotIn("target-arrowhead", line(out, "m <- a2"))
+        for forward in ("s -> m:", "m -> a:", "a -> d:", 'd -> a2: "[retry]"', "d -> e:"):
+            self.assertIn(forward, out)
+
+    def test_walk_starts_at_the_initial_node(self):
+        # written first, `a -> b` would look forward; from the initial node `b`, it closes the loop
+        out, _ = convert(AD + "a -> b\nb -> a\nb  # <<initial>>\n")
+        self.assertIn("b <- a: {", out)
+        self.assertIn("b -> a: {", out)
+
+    def test_chain_is_split_when_one_segment_turns(self):
+        out, _ = convert(AD + "s  # <<initial>>\ns -> a -> b -> a\n")
+        self.assertIn("s -> a: {", out)
+        self.assertIn("a -> b: {", out)
+        self.assertIn("a <- b: {", out)
+
+    def test_forward_flow_written_leftwards_is_turned_round(self):
+        out, _ = convert(AD + "s  # <<initial>>\na <- s\n")
+        self.assertIn("s -> a: {", out)
+
+    def test_user_arrowheads_follow_the_turn(self):
+        out, _ = convert(AD + "s  # <<initial>>\ns -> a\na -> s: {target-arrowhead.label: x}\n")
+        self.assertIn("s <- a:", out)
+        self.assertIn("source-arrowhead.label: x", out)
+        self.assertNotIn("target-arrowhead.label", out)
+
+    def test_flows_inside_groups(self):
+        out, _ = convert(AD + "s  # <<initial>>\ns -> g.a\ng: {\n  a -> b\n  b -> a\n}\n")
+        self.assertIn("a <- b: {", out)
+        self.assertIn("a -> b: {", out)
+
+    def test_other_diagrams_are_not_touched(self):
+        out, _ = convert("a -> b\nb -> a\n")
+        self.assertNotIn("<-", out)
+
+
 class PassThroughTests(unittest.TestCase):
     def test_config_and_other_shapes(self):
         src = 'vars: {\n  d2-config: {\n    layout-engine: elk\n  }\n}\ndirection: right\nnote: "hi" {shape: text}\n'

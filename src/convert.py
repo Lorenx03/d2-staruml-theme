@@ -15,6 +15,7 @@ comments, `{}` nesting, and statements separated by newlines or `;`.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -331,6 +332,10 @@ class Converter:
     diagram: str = "class"  # "class", "usecase" or "activity"
     text_width: Callable[[str], float] | None = None  # px width of a bold name
     vertical: bool = False  # flow runs left/right: fork/join bars stand upright
+    # activity diagrams: edge segments to write the other way round, by (scope, edge number)
+    rewrites: dict[tuple[str, int], set[int]] = field(default_factory=dict)
+    _scope: str = ""  # path of the container being converted ("" at the top level)
+    _edge_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
     @property
     def usecase(self) -> bool:
@@ -360,6 +365,14 @@ class Converter:
             out = self._undeclared_nodes(items, indent) + out
         return "\n".join(out)
 
+    def _child(self, key: str, body: str, indent: str) -> str:
+        """Convert the body of container `key`."""
+        outer, self._scope = self._scope, _join(self._scope, key)
+        try:
+            return self.convert(body, indent)
+        finally:
+            self._scope = outer
+
     def _statement(self, item: Item, stereo: str | None, indent: str) -> str:
         head, body, tail = split_block(item.text)
         if is_edge(head):
@@ -373,7 +386,7 @@ class Converter:
         if self._is_class(body, stereo) and key.lower() not in NO_RECURSE:
             return self._class(head, body or "", stereo, indent)
         if body is not None and key.split(".")[0].lower() not in NO_RECURSE:
-            inner = self.convert(body, indent + "  ")
+            inner = self._child(key, body, indent + "  ")
             return f"{indent}{head.rstrip()} {{\n{inner}\n{indent}}}{tail}"
         verbatim = indent + item.text
         return f"{verbatim}  # {item.trailing}" if item.trailing and body is None else verbatim
@@ -496,6 +509,25 @@ class Converter:
 
     def _edge(self, head: str, body: str | None, tail: str, stereo: str | None, indent: str) -> str:
         key, label = split_colon(head)
+        number = self._edge_counts[self._scope]
+        self._edge_counts[self._scope] += 1
+        rewrite = self.rewrites.get((self._scope, number))
+        if not rewrite:
+            return self._edge_line(key, label, body, tail, stereo, indent)
+        # written the other way round (see `_rewrites`); a chain is split into its segments
+        ends, ops = edge_endpoints(key), EDGE_OP_RE.findall(_without_strings(key))
+        lines = []
+        for i, op in enumerate(ops):
+            last = i == len(ops) - 1
+            if i in rewrite:
+                seg_body = _swap_arrowheads(body) if body is not None else None
+                lines.append(self._edge_line(f"{ends[i + 1]} {MIRROR[op]} {ends[i]}", label, seg_body, tail if last else "", stereo, indent))
+            else:
+                lines.append(self._edge_line(f"{ends[i]} {op} {ends[i + 1]}", label, body, tail if last else "", stereo, indent))
+        return "\n".join(lines)
+
+    def _edge_line(self, key: str, label: str | None, body: str | None, tail: str, stereo: str | None, indent: str) -> str:
+        head = f"{key}: {label}" if label else key
         fields = [style.EDGE_BASE]
         uc_kind = style.uc_edge_kind(stereo) if self.usecase and stereo is not None else None
         if uc_kind is not None:
@@ -552,7 +584,7 @@ class Converter:
         if kind == SYSTEM:
             lines += [pad + f for f in style.SYSTEM]
             if body is not None:
-                lines.append(self.convert(body, pad))
+                lines.append(self._child(key, body, pad))
         else:
             name = unquote(label) if label else unquote(key)
             for text in statements:
@@ -633,7 +665,7 @@ class Converter:
         if kind == GROUP:
             lines += [pad + f for f in style.ACTIVITY_GROUP]
             if body is not None:
-                lines.append(self.convert(body, pad))
+                lines.append(self._child(key, body, pad))
             lines.append(f"{indent}}}{tail}")
             return "\n".join(lines)
 
@@ -652,10 +684,148 @@ class Converter:
         return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- loops in activity diagrams
+# Layout engines lay a graph out in layers, along its edges, so a loop (`error -> retry`
+# back to a merge node higher up) has to be turned round first. ELK picks the edges to
+# turn round itself and often picks the wrong ones, which puts the start of the activity
+# at the bottom. So the converter finds the edges that close a loop, walking the flow
+# from the initial node in the order the edges are written, and writes them the other
+# way round: `retry <- error` is drawn exactly like `error -> retry` (arrow at `retry`),
+# but the engine sees an edge from `retry` down to `error`.
+
+MIRROR = {"->": "<-", "<-": "->"}
+
+
+def _path(key: str) -> list[str]:
+    """`a."B c".d` -> ['a', 'b c', 'd'] (d2 keys are case-insensitive)."""
+    parts, start, i = [], 0, 0
+    while i < len(key):
+        if key[i] in "\"'":
+            i = _skip_string(key, i)
+            continue
+        if key[i] == ".":
+            parts.append(key[start:i])
+            start = i + 1
+        i += 1
+    parts.append(key[start:])
+    return [unquote(p).lower() for p in parts]
+
+
+def _join(scope: str, key: str) -> str:
+    return ".".join(([scope] if scope else []) + _path(key))
+
+
+def _swap_arrowheads(body: str) -> str:
+    return re.sub(r"\b(source|target)-arrowhead\b", lambda m: ("target" if m.group(1) == "source" else "source") + "-arrowhead", body)
+
+
+@dataclass
+class _Flows:
+    nodes: list[str] = field(default_factory=list)  # in the order they appear
+    initial: list[str] = field(default_factory=list)
+    # (from, to, (scope, edge number), segment) for each `->`/`<-` segment, in order
+    edges: list[tuple[str, str, tuple[str, int], int]] = field(default_factory=list)
+    # every `->`/`<-` segment: (scope, edge number) -> {segment: operator}
+    ops: dict[tuple[str, int], dict[int, str]] = field(default_factory=lambda: defaultdict(dict))
+    counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+
+    def add(self, node: str) -> None:
+        if node not in self.nodes:
+            self.nodes.append(node)
+
+    def walk(self, src: str, scope: str = "") -> None:
+        """Collect nodes and flows, numbering edges per scope like `Converter._edge` does."""
+        pending: list[str] = []
+        for item in scan(src):
+            if item.kind == "blank":
+                pending = []
+            elif item.kind == "comment":
+                if not diagram_type_of(item.text):
+                    pending.append(item.text)
+            else:
+                stereo = find_stereotype(item.trailing, *reversed(pending))
+                pending = []
+                head, body, _ = split_block(item.text)
+                key, _ = split_colon(head)
+                if is_edge(head):
+                    self._edge(key, scope)
+                    continue
+                if _simple_key(key) is None or (stereo and _normalize(stereo) not in AD_STEREOTYPES):
+                    continue  # a keyword, or a class
+                node = _join(scope, key)
+                self.add(node)
+                if stereo and AD_STEREOTYPES[_normalize(stereo)] == INITIAL:
+                    self.initial.append(node)
+                if body is not None and not Converter._is_class(body, None):
+                    self.walk(body, node)
+
+    def _edge(self, key: str, scope: str) -> None:
+        stmt = (scope, self.counts[scope])
+        self.counts[scope] += 1
+        ends = [_join(scope, e) for e in edge_endpoints(key)]
+        for i, op in enumerate(EDGE_OP_RE.findall(_without_strings(key))):
+            a, b = ends[i], ends[i + 1]
+            self.add(a)
+            self.add(b)
+            if op in MIRROR:
+                self.ops[stmt][i] = op
+                self.edges.append((a, b, stmt, i) if op == "->" else (b, a, stmt, i))
+
+    def loops(self) -> set[tuple[tuple[str, int], int]]:
+        """Segments that close a loop: depth-first from the initial nodes (then from any
+        node not reached yet), an edge back to a node still being walked."""
+        out: dict[str, list[tuple[str, tuple[str, int], int]]] = defaultdict(list)
+        for a, b, stmt, seg in self.edges:
+            out[a].append((b, stmt, seg))
+        state: dict[str, int] = {}  # 1: being walked, 2: done
+        back = set()
+        for root in self.initial + self.nodes:
+            if root in state:
+                continue
+            state[root] = 1
+            stack = [(root, iter(out[root]))]
+            while stack:
+                node, todo = stack[-1]
+                step = next(todo, None)
+                if step is None:
+                    state[node] = 2
+                    stack.pop()
+                    continue
+                target, stmt, seg = step
+                if target not in state:
+                    state[target] = 1
+                    stack.append((target, iter(out[target])))
+                elif state[target] == 1 and target != node:
+                    back.add((stmt, seg))
+        return back
+
+
+def _rewrites(src: str) -> dict[tuple[str, int], set[int]]:
+    """Edge segments to write the other way round, so that the engine sees every flow
+    going forward and every loop going back up. `a -> b` is written `b <- a` when it
+    closes a loop; `a <- b`, which the engine already sees as `a` to `b`, is written
+    `b -> a` when it doesn't."""
+    flows = _Flows()
+    flows.walk(src)
+    back = flows.loops()
+    rewrites: dict[tuple[str, int], set[int]] = defaultdict(set)
+    for stmt, segments in flows.ops.items():
+        for seg, op in segments.items():
+            if (op == "->") == ((stmt, seg) in back):
+                rewrites[stmt].add(seg)
+    return dict(rewrites)
+
+
 def convert(src: str, text_width: Callable[[str], float] | None = None) -> tuple[str, list[str]]:
     """Plain d2 -> styled d2. Returns the d2 text and a list of warnings.
     `text_width` measures a bold name in px (to fit use case ovals and actions to it)."""
-    converter = Converter(diagram=diagram_type(src), text_width=text_width, vertical=_direction(src) in ("left", "right"))
+    kind = diagram_type(src)
+    converter = Converter(
+        diagram=kind,
+        text_width=text_width,
+        vertical=_direction(src) in ("left", "right"),
+        rewrites=_rewrites(src) if kind == "activity" else {},
+    )
     return converter.convert(src) + "\n", converter.warnings
 
 

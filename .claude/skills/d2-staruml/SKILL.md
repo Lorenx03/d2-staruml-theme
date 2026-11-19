@@ -158,8 +158,9 @@ Jazebo.drive -> Motion
 
 ### Activity diagrams
 
-Start the file with `# <<activity diagram>>`. Keep the default dagre layout
-(ELK lays loops out badly).
+Start the file with `# <<activity diagram>>`. Activity diagrams use ELK by
+default (right-angle lines); loops are turned round for the engine
+automatically, so write every flow in the direction it goes.
 
 ```d2
 # <<activity diagram>>
@@ -212,5 +213,4 @@ edges in declaration order.
 - Abstract classes can't be shown in italics.
 - Multiplicities come out bold.
 - Edges are curved (dagre) or right-angled (ELK), never straight diagonals.
-- Guards of flows leaving the same decision can overlap: shorten one or
-  reorder the edges.
+- Guards of flows leaving the same decision can overlap: shorten one.

@@ -327,10 +327,21 @@ The stereotype goes at the end of the node's line, or on the line above it.
   `direction: down`, upright with `direction: right`/`left`. They are drawn
   short and stretched afterwards (in the SVG) to reach 30px past the outermost
   flow that enters or leaves them (less if a shape beside them is in the
-  way), and those flows become straight lines, square to the bar.
-- Stay with **dagre** (the default) for activity diagrams: it lays loops
-  back to a merge node out the way StarUML does, top to bottom. ELK often
-  turns them the other way round.
+  way), and those flows become straight lines, square to the bar. A flow
+  whose straight line (or the bar stretched to meet it) would run into
+  another shape keeps the route the layout engine gave it.
+- Activity diagrams use **ELK** unless you pick an engine (`--layout`, or
+  `layout-engine` in the file): right-angle lines, like StarUML.
+- **Loops are handled for you.** A layout engine has to turn one edge of
+  each loop round to lay the graph out in layers, and ELK picks the wrong
+  ones (the start of the activity ends up at the bottom). So the converter
+  walks the flow from the initial node, in the order the edges are written,
+  and writes each edge that goes back to a node already on the path the
+  other way round: `error -> retry` becomes `retry <- error`. It is drawn
+  the same (the arrow still points at `retry`), but the engine now lays
+  `retry` above `error`. A chain (`a -> b -> a`) with such an edge is split
+  into single edges. Write the flows the way they go; loops should go back
+  to a `<<merge>>` node, as in StarUML.
 - Classes (`shape: class`, or a class stereotype like `<<entity>>`) are still
   drawn as classes.
 
@@ -344,7 +355,7 @@ In `diagrams/`:
 - `usecase_example.d2`: a use case diagram (actors, system, «include»,
   «extend»), ELK layout
 - `activity_example.d2`: an activity diagram (decisions and merges, loops,
-  fork/join, a time event, guards), dagre layout
+  fork/join, a time event, guards), ELK layout
 
 Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored).
 
@@ -355,9 +366,11 @@ Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored
   italic, and the font trick turns italic into bold.
 - d2's free layout engines draw either curves (dagre) or right angles (ELK),
   not StarUML's straight diagonal lines.
-- In activity diagrams, d2 places guard labels in the middle of their flows,
-  so the guards of two flows leaving the same decision can overlap. Shorten
-  one, or reorder the edges.
+- In activity diagrams, the guards of two flows leaving the same decision
+  can overlap: the layout engine puts both labels at the same height, and
+  reordering the edges doesn't change that. Shorten one of them.
+- A reference to an edge that the converter turned round
+  (`(error -> retry)[0].style…`) no longer finds it.
 - An attribute written without a visibility prefix and named like a d2
   keyword (`label`, `icon`, `tooltip`, `link`, `near`, `class`) is read as
   the keyword. Add `+`/`-`/`#`/`~` in front.
