@@ -1,0 +1,35 @@
+# <<activity diagram>>
+
+start  # <<initial>>
+retry  # <<merge>>
+select: Select robot to control
+ports: Enter operator port and telemetry port
+port_ok  # <<decision>>
+wrong_port: Display wrong port error message
+free  # <<decision>>
+busy: Display operator already present message
+dashboard: Show operator dashboard
+next  # <<merge>>
+fork  # <<fork>>
+send: Send command to robot
+wait: Wait while command is executing  # <<time>>
+monitor: Monitor telemetry
+join  # <<join>>
+outcome  # <<decision>>
+fault: Notify fault to user
+end  # <<final>>
+
+start -> retry -> select -> ports -> port_ok
+port_ok -> wrong_port: wrong port
+wrong_port -> retry
+port_ok -> free: good port
+free -> busy: another operator is controlling the selected robot
+busy -> retry
+free -> dashboard: no operator already present
+dashboard -> next -> fork
+fork -> send -> wait -> join
+fork -> monitor -> join
+join -> outcome
+outcome -> fault: robot faulted while command was executing
+fault -> next
+outcome -> end: command executed correctly

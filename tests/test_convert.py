@@ -177,6 +177,53 @@ class UseCaseTests(unittest.TestCase):
         self.assertIn('"«entity»"', out)
 
 
+AD = "# <<activity diagram>>\n"
+
+
+class ActivityTests(unittest.TestCase):
+    def test_node_kinds(self):
+        src = AD + (
+            "s  # <<initial>>\nd  # <<decision>>\nf  # <<fork>>\nw: Wait  # <<time>>\n"
+            "e  # <<final>>\nx  # <<flow final>>\na: Do it\n"
+        )
+        out, warnings = convert(src)
+        self.assertEqual(warnings, [])
+        self.assertIn("shape: circle", block(out, "s"))
+        self.assertIn("shape: diamond", block(out, "d"))
+        self.assertIn('label: ""', block(out, "d"))
+        self.assertIn("class: staruml-bar", block(out, "f"))
+        self.assertIn("width: 60; height: 5", block(out, "f"))
+        self.assertIn("hourglass.svg", block(out, "w"))
+        self.assertIn("class: staruml-final", block(out, "e"))
+        self.assertIn("class: staruml-flow-final", block(out, "x"))
+        self.assertIn("border-radius: 8", block(out, "a"))
+
+    def test_bars_stand_upright_when_flowing_right(self):
+        out, _ = convert(AD + "direction: right\nf  # <<join>>\n")
+        self.assertIn("width: 5; height: 60", block(out, "f"))
+
+    def test_guards_get_brackets(self):
+        out, _ = convert(AD + 'd -> a: ok\nd -> b: "[else]"\n')
+        self.assertIn('d -> a: "[ok]" {', out)
+        self.assertIn('d -> b: "[else]" {', out)
+        self.assertEqual(out.count("target-arrowhead.shape: arrow"), 2)
+
+    def test_undeclared_edge_ends_become_actions(self):
+        out, _ = convert(AD + "s  # <<initial>>\ns -> Compute result\n", text_width=lambda t: 10 * len(t))
+        self.assertIn("Compute result: {width: 180; height: 40", out)  # 140 + 2 * 20
+        self.assertNotIn("s: {width", out)
+
+    def test_decision_by_shape_and_its_label(self):
+        out, _ = convert(AD + "d: port ok? {shape: diamond}\n")
+        self.assertIn("label.near: outside-right-top", block(out, "d"))
+        self.assertEqual(block(out, "d").count("shape: diamond"), 1)
+
+    def test_group_converts_its_children(self):
+        out, _ = convert(AD + "Robot: {\n  a: Move\n  a -> b\n}\n")
+        self.assertIn("label.near: top-center", block(out, "Robot"))
+        self.assertIn("border-radius: 8", block(out, "  a"))
+
+
 class PassThroughTests(unittest.TestCase):
     def test_config_and_other_shapes(self):
         src = 'vars: {\n  d2-config: {\n    layout-engine: elk\n  }\n}\ndirection: right\nnote: "hi" {shape: text}\n'

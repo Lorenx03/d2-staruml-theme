@@ -1,11 +1,12 @@
-"""Convert a plain d2 class or use case diagram into the StarUML-styled d2 that `d2` renders.
+"""Convert a plain d2 class, use case or activity diagram into the StarUML-styled d2 that `d2` renders.
 
 Input is ordinary d2: classes are `shape: class` blocks, stereotypes are comments
 (`# <<entity>>`) above a class or at the end of its first line, and relationship
 kinds are comments on edges (`A -> B  # <<dep>>`). A top-level `# <<usecase diagram>>`
 switches to use case diagrams: actors, use cases (ovals), system boxes and
-«include»/«extend» edges. Everything the converter does not recognise is copied
-through unchanged.
+«include»/«extend» edges; `# <<activity diagram>>` to activity diagrams: actions,
+initial/final nodes, decisions, fork/join bars and guarded flows. Everything the
+converter does not recognise is copied through unchanged.
 
 The scanner below only understands as much d2 as it needs: strings, block strings,
 comments, `{}` nesting, and statements separated by newlines or `;`.
@@ -33,9 +34,24 @@ D2_KEYWORDS = CLASS_KEYWORDS | NO_RECURSE | {
 }  # fmt: skip
 
 # `# <<usecase diagram>>` anywhere at the top level picks the diagram type.
-DIAGRAM_TYPES = {"classdiagram": "class", "usecasediagram": "usecase"}
+DIAGRAM_TYPES = {"classdiagram": "class", "usecasediagram": "usecase", "activitydiagram": "activity"}
 ACTOR, USE_CASE, SYSTEM = "actor", "usecase", "system"
 UC_STEREOTYPES = {"actor": ACTOR, "usecase": USE_CASE, "system": SYSTEM, "subject": SYSTEM}
+
+# Activity diagram node kinds, by stereotype (normalized: `flow final` -> `flowfinal`).
+ACTION, INITIAL, FINAL, FLOW_FINAL, DECISION, BAR, TIME, GROUP = (
+    "action", "initial", "final", "flowfinal", "decision", "bar", "time", "group",
+)  # fmt: skip
+AD_STEREOTYPES = {
+    "action": ACTION,
+    "initial": INITIAL, "initialnode": INITIAL, "start": INITIAL,
+    "final": FINAL, "activityfinal": FINAL, "finalnode": FINAL, "end": FINAL,
+    "flowfinal": FLOW_FINAL,
+    "decision": DECISION, "merge": DECISION,
+    "fork": BAR, "join": BAR,
+    "time": TIME, "timeevent": TIME, "accepttimeevent": TIME, "wait": TIME,
+    "group": GROUP, "region": GROUP,
+}  # fmt: skip
 
 
 # ---------------------------------------------------------------- scanning
@@ -254,7 +270,7 @@ def _normalize(name: str) -> str:
 
 
 def diagram_type_of(comment: str) -> str | None:
-    """"usecase"/"class" if the comment is a diagram-type annotation."""
+    """"class"/"usecase"/"activity" if the comment is a diagram-type annotation."""
     stereo = find_stereotype(comment)
     return DIAGRAM_TYPES.get(_normalize(stereo)) if stereo else None
 
@@ -312,8 +328,17 @@ def _simple_key(key: str) -> str | None:
 @dataclass
 class Converter:
     warnings: list[str] = field(default_factory=list)
-    usecase: bool = False  # converting a use case diagram
+    diagram: str = "class"  # "class", "usecase" or "activity"
     text_width: Callable[[str], float] | None = None  # px width of a bold name
+    vertical: bool = False  # flow runs left/right: fork/join bars stand upright
+
+    @property
+    def usecase(self) -> bool:
+        return self.diagram == "usecase"
+
+    @property
+    def activity(self) -> bool:
+        return self.diagram == "activity"
 
     def convert(self, src: str, indent: str = "") -> str:
         out: list[str] = []
@@ -331,16 +356,17 @@ class Converter:
                 stereo = find_stereotype(item.trailing, *reversed(pending))
                 out.append(self._statement(item, stereo, indent))
                 pending = []
-        if self.usecase:
-            out = self._undeclared_use_cases(items, indent) + out
+        if self.usecase or self.activity:
+            out = self._undeclared_nodes(items, indent) + out
         return "\n".join(out)
 
     def _statement(self, item: Item, stereo: str | None, indent: str) -> str:
         head, body, tail = split_block(item.text)
         if is_edge(head):
             return self._edge(head, body, tail, stereo, indent)
-        if self.usecase:
-            node = self._uc_node(head, body, tail, stereo, indent)
+        if self.usecase or self.activity:
+            make = self._uc_node if self.usecase else self._ad_node
+            node = make(head, body, tail, stereo, indent)
             if node is not None:
                 return node
         key, _ = split_colon(head)
@@ -482,12 +508,15 @@ class Converter:
                 self.warnings.append(f"unknown relationship <<{stereo}>> on: {head.strip()}")
             else:
                 fields += kind_fields
-        elif self.usecase:  # a plain association: open arrow(s) where d2 would draw a head
+        elif self.usecase or self.activity:  # association / control flow: open arrow(s) where d2 would draw a head
             ops = _without_strings(key)
             if "->" in ops:
                 fields.append("target-arrowhead.shape: arrow")
             if "<-" in ops:
                 fields.append("source-arrowhead.shape: arrow")
+            if self.activity and label:  # a control flow's label is its guard
+                guard = unquote(label)
+                label = d2_string(guard if guard.startswith("[") else f"[{guard}]")
         inner = "; ".join(fields)
         head = f"{key}: {label}" if label else f"{key}:"
         if body is not None:
@@ -535,8 +564,9 @@ class Converter:
         lines.append(f"{indent}}}{tail}")
         return "\n".join(lines)
 
-    def _undeclared_use_cases(self, items: list[Item], indent: str) -> list[str]:
-        """Edge ends never declared in this scope (`Operator -> Drive robot`) are use cases.
+    def _undeclared_nodes(self, items: list[Item], indent: str) -> list[str]:
+        """Edge ends never declared in this scope (`Operator -> Drive robot`) are use cases
+        (or actions, in an activity diagram).
 
         They go at the top of the scope, so anything the user sets later still wins."""
         declared: set[str] = set()
@@ -555,17 +585,86 @@ class Converter:
             name = _simple_key(end)
             if name not in declared:
                 declared.add(name)
-                lines.append(f"{indent}{end}: {{{'; '.join(self._use_case(unquote(end)))}}}")
+                fields = self._use_case(unquote(end)) if self.usecase else self._action(unquote(end))
+                lines.append(f"{indent}{end}: {{{'; '.join(fields)}}}")
         return lines
 
-    def _use_case(self, name: str) -> list[str]:
+    def _measure(self, name: str) -> tuple[float, int]:
+        """Width of the widest line of a bold name, and its number of lines."""
         rows = name.replace("\\n", "\n").split("\n")
         measure = self.text_width or (lambda text: len(text) * style.APPROX_CHAR_WIDTH)
-        return style.use_case(max(measure(row) for row in rows), len(rows))
+        return max(measure(row) for row in rows), len(rows)
+
+    def _use_case(self, name: str) -> list[str]:
+        return style.use_case(*self._measure(name))
+
+    def _action(self, name: str) -> list[str]:
+        return style.action(*self._measure(name), name_on_top=not self.vertical)
+
+    # -- activity diagrams
+
+    def _ad_node(self, head: str, body: str | None, tail: str, stereo: str | None, indent: str) -> str | None:
+        """Action, initial/final node, decision/merge, fork/join, time event or a group
+        of nodes; None for anything else (keywords, classes)."""
+        key, label = split_colon(head)
+        if _simple_key(key) is None:
+            return None
+        statements = [item.text for item in scan(body or "") if item.kind == "stmt"]
+        shape, has_children, name = None, False, unquote(label) if label else unquote(key)
+        for text in statements:
+            s_head = split_block(text)[0]
+            s_key, s_value = split_colon(s_head)
+            if s_key.lower() == "shape":
+                shape = unquote(s_value or "").lower()
+            elif s_key.lower() == "label" and s_value:
+                name, label = unquote(s_value), s_value
+            elif is_edge(s_head) or s_key.split(".")[0].lower() not in D2_KEYWORDS:
+                has_children = True
+
+        kind = AD_STEREOTYPES.get(_normalize(stereo)) if stereo else None
+        if (stereo is not None and kind is None) or shape == "class":
+            return None  # a class (with its own stereotype) inside the activity diagram
+        if kind is None and shape == "diamond":
+            kind = DECISION
+        kind = kind or (GROUP if has_children else ACTION)
+
+        pad = indent + "  "
+        lines = [f"{indent}{key}: {label} {{" if label else f"{indent}{key}: {{"]
+        if kind == GROUP:
+            lines += [pad + f for f in style.ACTIVITY_GROUP]
+            if body is not None:
+                lines.append(self.convert(body, pad))
+            lines.append(f"{indent}}}{tail}")
+            return "\n".join(lines)
+
+        fields = {
+            ACTION: lambda: self._action(name),
+            INITIAL: lambda: style.INITIAL,
+            FINAL: lambda: style.FINAL,
+            FLOW_FINAL: lambda: style.FLOW_FINAL,
+            DECISION: lambda: style.DECISION + [style.DECISION_LABEL if label else 'label: ""'],
+            BAR: lambda: style.bar(self.vertical),
+            TIME: lambda: style.TIME_EVENT,
+        }[kind]()
+        lines += [pad + f for f in fields]
+        lines += [pad + t for t in statements if split_colon(split_block(t)[0])[0].lower() != "shape"]
+        lines.append(f"{indent}}}{tail}")
+        return "\n".join(lines)
 
 
 def convert(src: str, text_width: Callable[[str], float] | None = None) -> tuple[str, list[str]]:
     """Plain d2 -> styled d2. Returns the d2 text and a list of warnings.
-    `text_width` measures a bold name in px (to fit use case ovals to it)."""
-    converter = Converter(usecase=diagram_type(src) == "usecase", text_width=text_width)
+    `text_width` measures a bold name in px (to fit use case ovals and actions to it)."""
+    converter = Converter(diagram=diagram_type(src), text_width=text_width, vertical=_direction(src) in ("left", "right"))
     return converter.convert(src) + "\n", converter.warnings
+
+
+def _direction(src: str) -> str:
+    """The top-level `direction:` (d2's default is down)."""
+    direction = "down"
+    for item in scan(src):
+        if item.kind == "stmt":
+            key, value = split_colon(split_block(item.text)[0])
+            if key.lower() == "direction" and value:
+                direction = unquote(value).lower()
+    return direction

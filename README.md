@@ -1,6 +1,6 @@
-# StarUML-style class and use case diagrams with d2
+# StarUML-style class, use case and activity diagrams with d2
 
-Write UML class diagrams and use case diagrams in plain [d2](https://d2lang.com),
+Write UML class diagrams, use case diagrams and activity diagrams in plain [d2](https://d2lang.com),
 mark stereotypes and relationship kinds with comments, and get an SVG that looks
 like StarUML:
 
@@ -11,6 +11,8 @@ like StarUML:
 - UML arrowheads: open arrows, hollow triangles, diamonds
 - use case diagrams: stick-figure actors, use case ellipses, a system box,
   dashed `«include»`/`«extend»` arrows ([below](#use-case-diagrams))
+- activity diagrams: rounded actions, initial/final nodes, decision diamonds,
+  fork/join bars with straight flows, `[guards]` ([below](#activity-diagrams))
 
 ```sh
 uv run d2-staruml                               # every diagram in diagrams/ -> out/
@@ -273,6 +275,65 @@ In a use case diagram:
   up stay inside it instead of running along its top border. The values are
   `UC_ELK` in `src/style.py`.
 
+## Activity diagrams
+
+Put `# <<activity diagram>>` anywhere at the top level of the file.
+
+```d2
+# <<activity diagram>>
+
+start  # <<initial>>
+select: Select robot to control
+port_ok  # <<decision>>
+error: Display wrong port error message
+fork  # <<fork>>
+send: Send command to robot
+wait: Wait while command is executing  # <<time>>
+monitor: Monitor telemetry
+join  # <<join>>
+end  # <<final>>
+
+start -> select -> port_ok
+port_ok -> error: wrong port
+error -> select
+port_ok -> fork: good port
+fork -> send -> wait -> join
+fork -> monitor -> join
+join -> end
+```
+
+The stereotype goes at the end of the node's line, or on the line above it.
+
+| You write                              | Drawn as                                    |
+| -------------------------------------- | ------------------------------------------- |
+| any shape (`send: Send command`)       | action: rounded box, bold name at the top   |
+| `# <<initial>>`                        | filled black circle                         |
+| `# <<final>>`                          | circle with a black dot (activity final)    |
+| `# <<flow final>>`                     | circle with a cross                         |
+| `# <<decision>>` / `# <<merge>>`, or `shape: diamond` | small diamond, no name       |
+| `# <<fork>>` / `# <<join>>`            | black bar spanning the flows it splits/joins |
+| `# <<time>>` (or `<<wait>>`)           | hourglass, bold name below (time event)     |
+| a shape with shapes inside             | rounded frame, bold name at the top         |
+| `A -> B`                               | control flow: line + open arrow             |
+| `A -> B: label`                        | the label is the guard: `[label]`           |
+
+- Guards get their brackets added; one already in brackets must be quoted,
+  `d -> b: "[else]"`, because d2 reads a bare `[…]` as a list.
+- A decision with a name (`d: port ok? {shape: diamond}`, or a label after
+  `# <<decision>>`) shows it beside the diamond.
+- A shape used in an edge but never declared (`start -> Do something`)
+  becomes an action, so declare the other kinds of node explicitly.
+- Fork/join bars lie across the flow: horizontal with d2's default
+  `direction: down`, upright with `direction: right`/`left`. They are drawn
+  short and stretched afterwards (in the SVG) to reach 30px past the outermost
+  flow that enters or leaves them (less if a shape beside them is in the
+  way), and those flows become straight lines, square to the bar.
+- Stay with **dagre** (the default) for activity diagrams: it lays loops
+  back to a merge node out the way StarUML does, top to bottom. ELK often
+  turns them the other way round.
+- Classes (`shape: class`, or a class stereotype like `<<entity>>`) are still
+  drawn as classes.
+
 ## Examples
 
 In `diagrams/`:
@@ -282,6 +343,8 @@ In `diagrams/`:
   beans, enumerations), ELK layout
 - `usecase_example.d2`: a use case diagram (actors, system, «include»,
   «extend»), ELK layout
+- `activity_example.d2`: an activity diagram (decisions and merges, loops,
+  fork/join, a time event, guards), dagre layout
 
 Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored).
 
@@ -292,6 +355,9 @@ Render them with `uv run d2-staruml` (output goes to `out/`, which is gitignored
   italic, and the font trick turns italic into bold.
 - d2's free layout engines draw either curves (dagre) or right angles (ELK),
   not StarUML's straight diagonal lines.
+- In activity diagrams, d2 places guard labels in the middle of their flows,
+  so the guards of two flows leaving the same decision can overlap. Shorten
+  one, or reorder the edges.
 - An attribute written without a visibility prefix and named like a d2
   keyword (`label`, `icon`, `tooltip`, `link`, `near`, `class`) is read as
   the keyword. Add `+`/`-`/`#`/`~` in front.
@@ -307,7 +373,7 @@ src/
   style.py        # colours, stereotypes, sizes, edge kinds
   postprocess.py  # SVG touch-ups
   fonts.py        # finds the font files in fonts/
-  icons/          # boundary / control / entity / actor icons
+  icons/          # boundary / control / entity / actor / hourglass icons
 fonts/            # bundled font families (OFL)
 tests/            # uv run python -m unittest discover -s tests
 ```
@@ -334,6 +400,12 @@ tests/            # uv run python -m unittest discover -s tests
 3. **Post-process.** `postprocess.py` edits the SVG:
    - replaces d2's filled arrowheads with open ones
    - turns the blue-grey shadow grey
+   - activity diagrams: stretches fork/join bars (shapes with the d2 class
+     `staruml-bar`) to span their flows and straightens those flows; adds
+     the dot of final nodes and the cross of flow-final nodes (classes
+     `staruml-final`, `staruml-flow-final`). d2 names each shape's and edge's
+     `<g>` by its base64-encoded id, followed by its classes, which is how
+     they are found.
    - for PNG, points the text at the family `StarUML Text`. `rsvg-convert`
      can't read the fonts embedded in the SVG, so it runs with a throwaway
      fontconfig that knows only the two bundled files under that name

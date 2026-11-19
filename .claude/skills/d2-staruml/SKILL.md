@@ -1,14 +1,14 @@
 ---
 name: d2-staruml
-description: Write UML class diagrams and use case diagrams in d2 and render them to StarUML-style SVG/PNG with the `d2-staruml` command. Use when the user asks for a class diagram, a use case diagram, a BCE (boundary/control/entity) diagram, a StarUML-looking diagram, or to render/compile .d2 files to SVG.
+description: Write UML class diagrams, use case diagrams and activity diagrams in d2 and render them to StarUML-style SVG/PNG with the `d2-staruml` command. Use when the user asks for a class diagram, a use case diagram, an activity diagram, a BCE (boundary/control/entity) diagram, a StarUML-looking diagram, or to render/compile .d2 files to SVG.
 ---
 
 # d2-staruml
 
-`d2-staruml` turns plain d2 class diagrams and use case diagrams into
+`d2-staruml` turns plain d2 class, use case and activity diagrams into
 StarUML-looking SVGs: bold class names, compartment lines, `«stereotype»`
-lines with BCE icons and colours, UML arrowheads, stick-figure actors and
-use case ellipses. It needs `d2` on the PATH.
+lines with BCE icons and colours, UML arrowheads, stick-figure actors,
+use case ellipses, rounded actions, decision diamonds and fork/join bars. It needs `d2` on the PATH.
 
 If `command -v d2-staruml` finds nothing, tell the user the tool isn't
 installed. Don't install it yourself and don't fall back to plain `d2`:
@@ -156,6 +156,45 @@ Jazebo.drive -> Motion
 - Use ELK for the usual StarUML layout: primary actors on the left, the
   system in the middle, secondary actors on the right.
 
+### Activity diagrams
+
+Start the file with `# <<activity diagram>>`. Keep the default dagre layout
+(ELK lays loops out badly).
+
+```d2
+# <<activity diagram>>
+
+start  # <<initial>>
+retry  # <<merge>>
+select: Select robot to control
+port_ok  # <<decision>>
+error: Display wrong port error message
+fork  # <<fork>>
+send: Send command to robot
+wait: Wait while command is executing  # <<time>>
+monitor: Monitor telemetry
+join  # <<join>>
+end  # <<final>>
+
+start -> retry -> select -> port_ok
+port_ok -> error: wrong port
+error -> retry
+port_ok -> fork: good port
+fork -> send -> wait -> join
+fork -> monitor -> join
+join -> end
+```
+
+- Any plain shape is an action (rounded box). Undeclared edge ends are
+  actions too, so declare every other node with its stereotype.
+- `<<initial>>`, `<<final>>`, `<<flow final>>`, `<<decision>>`/`<<merge>>`
+  (or `shape: diamond`), `<<fork>>`/`<<join>>`, `<<time>>` (hourglass).
+- Edge labels are guards: `d -> a: wrong port` shows `[wrong port]`. Quote a
+  label that already has brackets: `d -> b: "[else]"`.
+- Loops go back to a `<<merge>>` node, as in StarUML.
+- Fork/join bars are stretched to span their flows automatically.
+- A shape with shapes inside is a rounded frame with its name on top.
+
 ### Layout
 
 Dagre is the default. To use ELK, add this to the diagram or pass
@@ -173,3 +212,5 @@ edges in declaration order.
 - Abstract classes can't be shown in italics.
 - Multiplicities come out bold.
 - Edges are curved (dagre) or right-angled (ELK), never straight diagonals.
+- Guards of flows leaving the same decision can overlap: shorten one or
+  reorder the edges.

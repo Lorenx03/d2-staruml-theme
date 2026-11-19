@@ -1,4 +1,4 @@
-"""`d2-staruml`: render plain d2 class and use case diagrams in StarUML style.
+"""`d2-staruml`: render plain d2 class, use case and activity diagrams in StarUML style.
 
 Diagrams live in diagrams/; renders go to out/ (same sub-folders).
 
@@ -204,7 +204,7 @@ def find_diagrams(diagrams_dir: Path, names: list[str]) -> list[Path]:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="d2-staruml",
-        description="Render plain d2 class and use case diagrams in StarUML style. "
+        description="Render plain d2 class, use case and activity diagrams in StarUML style. "
         "Without arguments, renders every diagram in diagrams/ to out/. "
         "Given a folder (d2-staruml path/to/dir -o svgs/), renders every diagram in it.",
     )

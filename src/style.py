@@ -156,3 +156,69 @@ def uc_edge_kind(name: str) -> tuple[str, list[str]] | None:
     key = name.strip().lower()
     key = UC_EDGE_ALIASES.get(key, key)
     return (key, UC_EDGE_KINDS[key]) if key in UC_EDGE_KINDS else None
+
+
+# ---------------------------------------------------------------- activity diagrams
+# Fork/join bars, final and flow-final nodes carry a d2 class so that
+# postprocess.py can find them in the SVG (see there).
+BAR_CLASS, FINAL_CLASS, FLOW_FINAL_CLASS = "staruml-bar", "staruml-final", "staruml-flow-final"
+
+ACTION_PAD_X = 20  # room left and right of an action's name
+ACTION_HEIGHT = 40  # one line of text, name at the top like StarUML; each further line adds UC_LINE_HEIGHT
+ACTION_RADIUS = 8
+
+
+def action(name_width: float, lines: int = 1, name_on_top: bool = True) -> list[str]:
+    """A rounded box fitted to its name, the name near the top. (Not when the flow runs
+    left/right: there dagre makes boxes with a top label taller than asked.)"""
+    width = round(name_width + 2 * ACTION_PAD_X)
+    height = ACTION_HEIGHT + UC_LINE_HEIGHT * (lines - 1)
+    return [
+        f"width: {width}; height: {height}",
+        "label.near: top-center" if name_on_top else "label.near: center-center",
+        f"style: {{{_OUTLINE}; border-radius: {ACTION_RADIUS}; {_BOLD_TEXT}}}",
+    ]
+
+
+NODE_SIZE = 28  # initial, final and flow-final circles
+INITIAL = [
+    'shape: circle; label: ""',
+    f"width: {NODE_SIZE}; height: {NODE_SIZE}",
+    f"style: {{stroke: {BLACK}; stroke-width: 1; fill: {BLACK}; shadow: true}}",
+]
+_RING = [
+    'shape: circle; label: ""',
+    f"width: {NODE_SIZE}; height: {NODE_SIZE}",
+    f"style: {{{_OUTLINE}}}",
+]
+FINAL = _RING + [f"class: {FINAL_CLASS}"]  # the inner dot is added by postprocess.py
+FLOW_FINAL = _RING + [f"class: {FLOW_FINAL_CLASS}"]  # so is the cross
+
+DECISION_SIZE = 30
+_REGULAR_TEXT = f"font-size: {FONT_SIZE}; font-color: {BLACK}; bold: false; italic: false"
+DECISION = [
+    "shape: diamond",
+    f"width: {DECISION_SIZE}; height: {DECISION_SIZE}",
+    f"style: {{{_OUTLINE}; {_REGULAR_TEXT}}}",
+]
+DECISION_LABEL = "label.near: outside-right-top"  # a decision's name, if it has one, sits beside it
+
+# Fork/join: a thin flat bar (no shadow). It is drawn short here and stretched by
+# postprocess.py to span the flows it splits or joins, which run straight into it.
+BAR_THICKNESS, BAR_LENGTH = 5, 60
+
+
+def bar(vertical: bool) -> list[str]:
+    w, h = (BAR_THICKNESS, BAR_LENGTH) if vertical else (BAR_LENGTH, BAR_THICKNESS)
+    return [
+        'shape: rectangle; label: ""',
+        f"width: {w}; height: {h}",
+        f"style: {{stroke: {BLACK}; stroke-width: 1; fill: {BLACK}}}",
+        f"class: {BAR_CLASS}",
+    ]
+
+
+HOURGLASS_ICON = ICON_DIR / "hourglass.svg"
+TIME_EVENT = [f'shape: image; icon: "{HOURGLASS_ICON}"; width: 20; height: 26', f"style: {{{_BOLD_TEXT}}}"]
+# a shape with shapes inside: a frame with its name at the top (like a use case system box)
+ACTIVITY_GROUP = ["shape: rectangle", "label.near: top-center", f"style: {{{_OUTLINE}; border-radius: {ACTION_RADIUS}; {_BOLD_TEXT}}}"]
